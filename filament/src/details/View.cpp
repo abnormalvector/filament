@@ -1043,6 +1043,12 @@ void FView::prepare(FEngine& engine, DriverApi& driver, LinearAllocatorArena& ar
     colorPassDescriptorSet.prepareTemporalNoise(engine, mTemporalAntiAliasingOptions);
     colorPassDescriptorSet.prepareBlending(needsAlphaChannel);
     colorPassDescriptorSet.prepareMaterialGlobals(mMaterialGlobals);
+    auto& uniforms = mUniforms.edit();
+    auto const& clouds = mCloudShadowOptions;
+    uniforms.cloudShadowParams = {
+            clouds.enabled ? clouds.strength : 0.0f, 1.0f / clouds.scale,
+            clouds.coverage, clouds.softness };
+    uniforms.cloudShadowOffset = { clouds.offset / clouds.scale, 0.0f, 0.0f };
 }
 
 void FView::computeVisibilityMasks(
@@ -1685,6 +1691,14 @@ void FView::setDepthOfFieldOptions(DepthOfFieldOptions options) noexcept {
     options.focusBand.foregroundTransition = std::max(0.001f, options.focusBand.foregroundTransition);
     options.focusBand.backgroundTransition = std::max(0.001f, options.focusBand.backgroundTransition);
     mDepthOfFieldOptions = options;
+}
+
+void FView::setCloudShadowOptions(CloudShadowOptions options) noexcept {
+    options.strength = saturate(options.strength);
+    options.scale = clamp(options.scale, 1.0f, 1000.0f);
+    options.coverage = saturate(options.coverage);
+    options.softness = clamp(options.softness, 0.01f, 0.5f);
+    mCloudShadowOptions = options;
 }
 
 void FView::setVignetteOptions(VignetteOptions options) noexcept {

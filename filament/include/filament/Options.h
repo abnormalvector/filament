@@ -199,6 +199,20 @@ struct BloomOptions {
 };
 
 /**
+ * Procedural cloud transmittance for the dominant directional light. Native C++ only.
+ * Uses Y-up user-world coordinates, projected along the sun onto the Y=0 reference plane.
+ * Does not affect indirect lighting, emissive surfaces, or other lights. Feature level 1 and above.
+ */
+struct CloudShadowOptions {
+    bool enabled = false;
+    float strength = 0.4f;           //!< Maximum fraction of sunlight removed, [0, 1].
+    float scale = 48.0f;             //!< Base noise-cell size in world meters, [1, 1000].
+    float coverage = 0.5f;           //!< Density threshold control, [0, 1].
+    float softness = 0.2f;           //!< Density transition half-width, [0.01, 0.5].
+    math::float2 offset = { 0, 0 };  //!< Cloud displacement along world X/Z, in meters.
+};
+
+/**
  * Options to control large-scale fog in the scene. Materials can enable the <code>linearFog</code> property,
  * which uses a simplified, linear equation for fog calculation; in this mode, the heightFalloff
  * is ignored as well as the mipmap selection in IBL or skyColor mode.

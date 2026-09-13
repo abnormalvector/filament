@@ -287,6 +287,14 @@ View::FogOptions View::getFogOptions() const noexcept {
     return downcast(this)->getFogOptions();
 }
 
+void View::setCloudShadowOptions(CloudShadowOptions options) noexcept {
+    downcast(this)->setCloudShadowOptions(options);
+}
+
+CloudShadowOptions View::getCloudShadowOptions() const noexcept {
+    return downcast(this)->getCloudShadowOptions();
+}
+
 void View::setDepthOfFieldOptions(DepthOfFieldOptions options) noexcept {
     downcast(this)->setDepthOfFieldOptions(options);
 }

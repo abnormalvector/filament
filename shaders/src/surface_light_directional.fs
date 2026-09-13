@@ -20,10 +20,56 @@ vec3 sampleSunAreaLight(const vec3 lightDirection) {
     return lightDirection;
 }
 
+#if MATERIAL_FEATURE_LEVEL > 0
+highp float cloudShadowHash(highp vec2 cell) {
+    // Periodic integer lattice permits continuous, bounded CPU animation offsets.
+    highp uvec2 p = uvec2(mod(cell, 256.0));
+    highp uint h = p.x * 1664525u + p.y * 1013904223u;
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h ^= h >> 13u;
+    return float(h & 0x00ffffffu) * (1.0 / 16777215.0);
+}
+
+highp float cloudShadowNoise(highp vec2 p) {
+    highp vec2 cell = floor(p);
+    highp vec2 f = fract(p);
+    highp vec2 w = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    return mix(mix(cloudShadowHash(cell), cloudShadowHash(cell + vec2(1.0, 0.0)), w.x),
+               mix(cloudShadowHash(cell + vec2(0.0, 1.0)),
+                   cloudShadowHash(cell + vec2(1.0)), w.x), w.y);
+}
+
+float cloudShadowTransmittance() {
+    highp vec4 parameters = frameUniforms.cloudShadowParams;
+    if (parameters.x <= 0.0) {
+        return 1.0;
+    }
+    // Undo Filament's camera-origin shift and IBL rotation for both position and light.
+    highp vec3 position = getUserWorldPosition();
+    highp vec3 sun = mat3(getUserWorldFromWorldMatrix()) * frameUniforms.lightDirection;
+    // Fade out at the horizon, where projection onto the ground becomes singular.
+    float horizon = smoothstep(0.02, 0.1, sun.y);
+    if (horizon <= 0.0) {
+        return 1.0;
+    }
+    highp vec2 projected = position.xz - position.y * sun.xz / max(sun.y, 0.02);
+    highp vec2 uv = projected * parameters.y - frameUniforms.cloudShadowOffset.xy;
+    highp float density = 0.65 * cloudShadowNoise(uv)
+            + 0.25 * cloudShadowNoise(uv * 2.0 + vec2(17.0, 43.0))
+            + 0.10 * cloudShadowNoise(uv * 4.0 + vec2(61.0, 13.0));
+    float threshold = mix(1.0 + parameters.w, -parameters.w, parameters.z);
+    float cloud = smoothstep(threshold - parameters.w, threshold + parameters.w, density);
+    return 1.0 - parameters.x * cloud * horizon;
+}
+#endif
+
 Light getDirectionalLight() {
     Light light;
     // note: lightColorIntensity.w is always premultiplied by the exposure
     light.colorIntensity = frameUniforms.lightColorIntensity;
+#if MATERIAL_FEATURE_LEVEL > 0
+    light.colorIntensity.w *= cloudShadowTransmittance();
+#endif
     light.l = sampleSunAreaLight(frameUniforms.lightDirection);
     light.attenuation = 1.0;
     light.NoL = saturate(dot(shading_normal, light.l));

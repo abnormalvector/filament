@@ -231,7 +231,9 @@ struct PerViewUib { // NOLINT(cppcoreguidelines-pro-type-member-init)
     int32_t extraDirReserved2;
 
     // bring PerViewUib to 2 KiB
-    math::float4 reserved[9];
+    math::float4 cloudShadowParams; // strength, inverse scale, coverage, softness
+    math::float4 cloudShadowOffset; // displacement in noise cells (world X/Z), unused Z/W
+    math::float4 reserved[7];
 };
 
 // 2 KiB == 128 float4s

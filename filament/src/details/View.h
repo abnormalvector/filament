@@ -420,6 +420,9 @@ public:
 
     void setFogOptions(FogOptions options) noexcept;
 
+    void setCloudShadowOptions(CloudShadowOptions options) noexcept;
+    CloudShadowOptions getCloudShadowOptions() const noexcept { return mCloudShadowOptions; }
+
     FogOptions getFogOptions() const noexcept {
         return mFogOptions;
     }
@@ -635,6 +638,7 @@ private:
     SoftShadowOptions mSoftShadowOptions;
     BloomOptions mBloomOptions;
     FogOptions mFogOptions;
+    CloudShadowOptions mCloudShadowOptions;
     DepthOfFieldOptions mDepthOfFieldOptions;
     VignetteOptions mVignetteOptions;
     TemporalAntiAliasingOptions mTemporalAntiAliasingOptions;

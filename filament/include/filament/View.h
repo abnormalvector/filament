@@ -490,6 +490,12 @@ public:
      */
     FogOptions getFogOptions() const noexcept;
 
+    /** Sets procedural cloud shadows on the dominant directional light. Native C++ only. */
+    void setCloudShadowOptions(CloudShadowOptions options) noexcept;
+
+    /** Returns the procedural cloud shadow settings. */
+    CloudShadowOptions getCloudShadowOptions() const noexcept;
+
     /**
      * Enables or disables Depth of Field. Disabled by default.
      *

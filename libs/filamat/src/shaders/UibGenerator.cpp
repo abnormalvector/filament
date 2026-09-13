@@ -241,6 +241,9 @@ BufferInterfaceBlock const& UibGenerator::getPerViewUib() noexcept  {
             { "extraDirReserved1",        0, Type::INT                     },
             { "extraDirReserved2",        0, Type::INT                     },
 
+            { "cloudShadowParams",        0, Type::FLOAT4, Precision::HIGH },
+            { "cloudShadowOffset",        0, Type::FLOAT4, Precision::HIGH },
+
             // bring PerViewUib to 2 KiB
             { "reserved", sizeof(PerViewUib::reserved)/16, Type::FLOAT4 }
             })

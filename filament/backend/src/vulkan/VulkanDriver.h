@@ -63,28 +63,6 @@ public:
     static Driver* create(VulkanPlatform* platform, VulkanContext& context,
             Platform::DriverConfig const& driverConfig);
 
-    // Encapsulates the VK_EXT_debug_utils extension.  In particular, we use
-    // vkSetDebugUtilsObjectNameEXT and vkCreateDebugUtilsMessengerEXT
-    class DebugUtils {
-    public:
-        static void setName(VkObjectType type, uint64_t handle, char const* name);
-
-    private:
-        static DebugUtils* get();
-
-        DebugUtils(VkInstance instance, VkDevice device, VulkanContext const& context);
-        ~DebugUtils();
-
-        VkInstance const mInstance;
-        VkDevice const mDevice;
-        bool const mEnabled;
-        VkDebugUtilsMessengerEXT mDebugMessenger = VK_NULL_HANDLE;
-
-        static DebugUtils* mSingleton;
-
-        friend class VulkanDriver;
-    };
-
 private:
     template<typename D>
     using resource_ptr = fvkmemory::resource_ptr<D>;
@@ -159,8 +137,13 @@ private:
     // binding (for external samplers) and commits descriptor sets.
     void prepareDraw();
 
-    // Flush the current command buffer and reset the pipeline state.
+    // Flushes the current command buffer and resets the states whose scope is at the command
+    // buffer level.
     void endCommandRecording();
+
+    // Invalidates all the states whose scope is at the command buffer level
+    // (pipeline, descriptor sets, etc..).
+    void invalidateBoundState();
 
     // Returns whether the acquire was successful
     bool acquireNextSwapchainImage();
@@ -215,7 +198,6 @@ private:
 
     struct BindInDrawBundle {
         PipelineState pipelineState = {};
-        DescriptorSetLayoutHandleList dsLayoutHandles = {};
         fvkutils::DescriptorSetMask descriptorSetMask = {};
         resource_ptr<VulkanProgram> program = {};
     };

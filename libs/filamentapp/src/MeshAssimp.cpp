@@ -27,6 +27,7 @@
 
 #include "generated/resources/filamentapp.h"
 
+#include <filamentapp/DesktopAssetLoader.h>
 #include <filamentapp/MeshAssimp.h>
 
 #include <filament/Color.h>
@@ -254,7 +255,16 @@ static ushort2 convertUV(float2 uv) {
     }
 }
 
-MeshAssimp::MeshAssimp(Engine& engine) : mEngine(engine) {
+MeshAssimp::MeshAssimp(Engine& engine, filament::app::AssetLoader* assetLoader) :
+        mEngine(engine),
+        mAssetLoader(assetLoader),
+        mAllocatedAssetLoader(false) {
+
+    if (!mAssetLoader) {
+        mAssetLoader = new filament::app::DesktopAssetLoader();
+        mAllocatedAssetLoader = true;
+    }
+
     mDefaultMap = createOneByOneTexture(0xffffffff);
     mDefaultNormalMap = createOneByOneTexture(0xffff8080);
 
@@ -280,24 +290,51 @@ MeshAssimp::~MeshAssimp() {
     for (Entity renderable : mRenderables) {
         mEngine.destroy(renderable);
     }
-    mEngine.destroy(mVertexBuffer);
-    mEngine.destroy(mIndexBuffer);
-    for (auto& item : mMaterialInstances) {
-        mEngine.destroy(item.second);
+    if (mVertexBuffer) {
+        mEngine.destroy(mVertexBuffer);
     }
-    mEngine.destroy(mDefaultColorMaterial);
-    mEngine.destroy(mDefaultTransparentColorMaterial);
+    if (mIndexBuffer) {
+        mEngine.destroy(mIndexBuffer);
+    }
+    for (auto& item : mMaterialInstances) {
+        if (item.second) {
+            mEngine.destroy(item.second);
+        }
+    }
+    if (mDefaultColorMaterial) {
+        mEngine.destroy(mDefaultColorMaterial);
+    }
+    if (mDefaultTransparentColorMaterial) {
+        mEngine.destroy(mDefaultTransparentColorMaterial);
+    }
     for (auto& item : mGltfMaterialCache) {
         auto material = item.second;
-        mEngine.destroy(material);
+        if (material) {
+            mEngine.destroy(material);
+        }
     }
-    mEngine.destroy(mDefaultNormalMap);
-    mEngine.destroy(mDefaultMap);
+    if (mDefaultNormalMap) {
+        mEngine.destroy(mDefaultNormalMap);
+    }
+    if (mDefaultMap) {
+        mEngine.destroy(mDefaultMap);
+    }
     for (Texture* texture : mTextures) {
-        mEngine.destroy(texture);
+        if (texture) {
+            mEngine.destroy(texture);
+        }
     }
     // destroy the Entities itself
     EntityManager::get().destroy(mRenderables.size(), mRenderables.data());
+    if (rootEntity) {
+        mEngine.destroy(rootEntity);
+        EntityManager::get().destroy(rootEntity);
+        rootEntity = Entity{};
+    }
+
+    if (mAllocatedAssetLoader) {
+        delete mAssetLoader;
+    }
 }
 
 template<typename T>
@@ -313,12 +350,12 @@ struct State {
 };
 
 //TODO: Remove redundant method from sample_full_pbr
-static void loadTexture(Engine *engine, const std::string &filePath, Texture **map,
-        bool sRGB, bool hasAlpha) {
+static void loadTexture(Engine* engine, const std::string& filePath, Texture** map, bool sRGB,
+        bool hasAlpha, filament::app::AssetLoader* loader) {
 
-    if (!filePath.empty()) {
-        Path path(filePath);
-        if (path.exists()) {
+    if (!filePath.empty() && loader) {
+        auto buf = loader->load(Path(filePath));
+        if (!buf.empty()) {
             int w, h, n;
             int numChannels = hasAlpha ? 4 : 3;
 
@@ -331,7 +368,7 @@ static void loadTexture(Engine *engine, const std::string &filePath, Texture **m
 
             Texture::Format outputFormat = hasAlpha ? Texture::Format::RGBA : Texture::Format::RGB;
 
-            uint8_t *data = stbi_load(path.getAbsolutePath().c_str(), &w, &h, &n, numChannels);
+            uint8_t* data = stbi_load_from_memory(buf.data(), buf.size(), &w, &h, &n, numChannels);
             if (data != nullptr) {
                 *map = Texture::Builder()
                         .width(uint32_t(w))
@@ -349,10 +386,10 @@ static void loadTexture(Engine *engine, const std::string &filePath, Texture **m
                 (*map)->setImage(*engine, 0, std::move(buffer));
                 (*map)->generateMipmaps(*engine);
             } else {
-                std::cout << "The texture " << path.c_str() << " could not be loaded" << std::endl;
+                std::cout << "The texture " << filePath << " could not be loaded" << std::endl;
             }
         } else {
-            std::cout << "The texture " << path.c_str() << " does not exist" << std::endl;
+            std::cout << "The texture " << filePath << " does not exist" << std::endl;
         }
     }
 }
@@ -442,7 +479,8 @@ void setTextureFromPath(const aiScene* scene, Engine* engine,
         std::vector<filament::Texture*> textures, const aiString& textureFile,
         const std::string& materialName, const std::string& textureDirectory,
         aiTextureMapMode* mapMode, const char* parameterName,
-        std::map<utils::CString, MaterialInstance*>& outMaterials, unsigned int aiMinFilterType = 0,
+        std::map<utils::CString, MaterialInstance*>& outMaterials,
+        filament::app::AssetLoader* loader, unsigned int aiMinFilterType = 0,
         unsigned int aiMagFilterType = 0) {
 
     TextureSampler::MinFilter minFilterType = aiMinFilterToFilament(aiMinFilterType);
@@ -473,7 +511,8 @@ void setTextureFromPath(const aiScene* scene, Engine* engine,
     if (embeddedId != -1) {
         loadEmbeddedTexture(engine, scene->mTextures[embeddedId], &textureMap, isSRGB, hasAlpha);
     } else {
-        loadTexture(engine, textureDirectory + textureFile.C_Str(), &textureMap, isSRGB, hasAlpha);
+        loadTexture(engine, textureDirectory + textureFile.C_Str(), &textureMap, isSRGB, hasAlpha,
+                loader);
     }
 
     textures.push_back(textureMap);
@@ -503,6 +542,10 @@ Box computeTransformedAABB(VECTOR const* vertices, INDEX const* indices, size_t 
 
 void MeshAssimp::addFromFile(const Path& path,
         std::map<utils::CString, MaterialInstance*>& materials, bool overrideMaterial) {
+    std::vector<uint8_t> buffer = mAssetLoader->load(path);
+    if (buffer.empty()) {
+        return;
+    }
 
     Asset asset;
     asset.file = path;
@@ -513,30 +556,36 @@ void MeshAssimp::addFromFile(const Path& path,
         // "command buffer" lifetime, we wouldn't need to have to deal with freeing the
         // std::vectors here.
 
-        //TODO: a lot of these method arguments should probably be class or global variables
-        if (!setFromFile(asset, materials)) {
+        // TODO: a lot of these method arguments should probably be class or global variables
+        if (!setFromBuffer(asset, materials, buffer.data(), buffer.size())) {
             return;
         }
 
-        VertexBuffer::Builder vertexBufferBuilder = VertexBuffer::Builder()
-                .vertexCount((uint32_t)asset.positions.size())
-                .bufferCount(4)
-                .attribute(VertexAttribute::POSITION,     0, VertexBuffer::AttributeType::HALF4)
-                .attribute(VertexAttribute::TANGENTS,     1, VertexBuffer::AttributeType::SHORT4)
-                .normalized(VertexAttribute::TANGENTS);
+        VertexBuffer::Builder vertexBufferBuilder =
+                VertexBuffer::Builder()
+                        .vertexCount((uint32_t) asset.positions.size())
+                        .bufferCount(4)
+                        .attribute(VertexAttribute::POSITION, 0, VertexBuffer::AttributeType::HALF4)
+                        .attribute(VertexAttribute::TANGENTS, 1,
+                                VertexBuffer::AttributeType::SHORT4)
+                        .normalized(VertexAttribute::TANGENTS);
 
         if (asset.snormUV0) {
-            vertexBufferBuilder.attribute(VertexAttribute::UV0, 2, VertexBuffer::AttributeType::SHORT2)
-                .normalized(VertexAttribute::UV0);
+            vertexBufferBuilder
+                    .attribute(VertexAttribute::UV0, 2, VertexBuffer::AttributeType::SHORT2)
+                    .normalized(VertexAttribute::UV0);
         } else {
-            vertexBufferBuilder.attribute(VertexAttribute::UV0, 2, VertexBuffer::AttributeType::HALF2);
+            vertexBufferBuilder.attribute(VertexAttribute::UV0, 2,
+                    VertexBuffer::AttributeType::HALF2);
         }
 
         if (asset.snormUV1) {
-            vertexBufferBuilder.attribute(VertexAttribute::UV1, 3, VertexBuffer::AttributeType::SHORT2)
+            vertexBufferBuilder
+                    .attribute(VertexAttribute::UV1, 3, VertexBuffer::AttributeType::SHORT2)
                     .normalized(VertexAttribute::UV1);
         } else {
-            vertexBufferBuilder.attribute(VertexAttribute::UV1, 3, VertexBuffer::AttributeType::HALF2);
+            vertexBufferBuilder.attribute(VertexAttribute::UV1, 3,
+                    VertexBuffer::AttributeType::HALF2);
         }
 
         mVertexBuffer = vertexBufferBuilder.build(mEngine);
@@ -554,10 +603,12 @@ void MeshAssimp::addFromFile(const Path& path,
                 VertexBuffer::BufferDescriptor(ns->data(), ns->size(), State<short4>::free, ns));
 
         mVertexBuffer->setBufferAt(mEngine, 2,
-                VertexBuffer::BufferDescriptor(t0s->data(), t0s->size(), State<ushort2>::free, t0s));
+                VertexBuffer::BufferDescriptor(t0s->data(), t0s->size(), State<ushort2>::free,
+                        t0s));
 
         mVertexBuffer->setBufferAt(mEngine, 3,
-                VertexBuffer::BufferDescriptor(t1s->data(), t1s->size(), State<ushort2>::free, t1s));
+                VertexBuffer::BufferDescriptor(t1s->data(), t1s->size(), State<ushort2>::free,
+                        t1s));
 
         mIndexBuffer = IndexBuffer::Builder().indexCount(uint32_t(is->size())).build(mEngine);
         mIndexBuffer->setBuffer(mEngine,
@@ -576,18 +627,18 @@ void MeshAssimp::addFromFile(const Path& path,
     EntityManager::get().create(1, &rootEntity);
 
     TransformManager& tcm = mEngine.getTransformManager();
-    //Add root instance
+    // Add root instance
     tcm.create(rootEntity, TransformManager::Instance{}, mat4f());
 
-    for (auto& mesh : asset.meshes) {
+    for (auto& mesh: asset.meshes) {
         RenderableManager::Builder builder(mesh.parts.size());
         builder.boundingBox(mesh.aabb);
         builder.screenSpaceContactShadows(true);
 
         size_t partIndex = 0;
-        for (auto& part : mesh.parts) {
-            builder.geometry(partIndex, RenderableManager::PrimitiveType::TRIANGLES,
-                    mVertexBuffer, mIndexBuffer, part.offset, part.count);
+        for (auto& part: mesh.parts) {
+            builder.geometry(partIndex, RenderableManager::PrimitiveType::TRIANGLES, mVertexBuffer,
+                    mIndexBuffer, part.offset, part.count);
 
             if (overrideMaterial) {
                 builder.material(partIndex, materials[AI_DEFAULT_MATERIAL_NAME]);
@@ -601,7 +652,7 @@ void MeshAssimp::addFromFile(const Path& path,
                     if (part.opacity < 1.0f) {
                         colorMaterial = mDefaultTransparentColorMaterial->createInstance();
                         colorMaterial->setParameter("baseColor", RgbaType::sRGB,
-                                sRGBColorA { part.baseColor, part.opacity });
+                                sRGBColorA{ part.baseColor, part.opacity });
                     } else {
                         colorMaterial = mDefaultColorMaterial->createInstance();
                         colorMaterial->setParameter("baseColor", RgbType::sRGB, part.baseColor);
@@ -622,8 +673,8 @@ void MeshAssimp::addFromFile(const Path& path,
             builder.build(mEngine, entity);
         }
         auto pindex = asset.parents[meshIndex];
-        TransformManager::Instance parent((pindex < 0) ?
-                tcm.getInstance(rootEntity) : tcm.getInstance(mRenderables[pindex]));
+        TransformManager::Instance parent(
+                (pindex < 0) ? tcm.getInstance(rootEntity) : tcm.getInstance(mRenderables[pindex]));
         tcm.create(entity, parent, mesh.transform);
     }
 
@@ -634,15 +685,16 @@ void MeshAssimp::addFromFile(const Path& path,
 
 using Assimp::Importer;
 
-bool MeshAssimp::setFromFile(Asset& asset,
-        std::map<utils::CString, MaterialInstance*>& outMaterials) {
+bool MeshAssimp::setFromBuffer(Asset& asset,
+        std::map<utils::CString, MaterialInstance*>& outMaterials, const uint8_t* buffer,
+        size_t length) {
     Importer importer;
     importer.SetPropertyInteger(AI_CONFIG_PP_SBP_REMOVE,
             aiPrimitiveType_LINE | aiPrimitiveType_POINT);
     importer.SetPropertyBool(AI_CONFIG_IMPORT_COLLADA_IGNORE_UP_DIRECTION, true);
     importer.SetPropertyBool(AI_CONFIG_PP_PTV_KEEP_HIERARCHY, true);
 
-    aiScene const* scene = importer.ReadFile(asset.file,
+    unsigned int flags =
             // normals and tangents
             aiProcess_GenSmoothNormals |
             aiProcess_CalcTangentSpace |
@@ -656,7 +708,10 @@ bool MeshAssimp::setFromFile(Asset& asset,
             aiProcess_ImproveCacheLocality |
             aiProcess_SortByPType |
             // we only support triangles
-            aiProcess_Triangulate);
+            aiProcess_Triangulate;
+
+    aiScene const* scene =
+            importer.ReadFileFromMemory(buffer, length, flags, asset.file.getExtension().c_str());
 
     size_t index = importer.GetImporterIndex(asset.file.getExtension().c_str());
     const aiImporterDesc* importerDesc = importer.GetImporterInfo(index);
@@ -1030,8 +1085,8 @@ void MeshAssimp::processGLTFMaterial(const aiScene* scene, const aiMaterial* mat
         material->Get("$tex.mappingfiltermin", AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_TEXTURE, minType);
         material->Get("$tex.mappingfiltermag", AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_BASE_COLOR_TEXTURE, magType);
 
-        setTextureFromPath(scene, &mEngine, mTextures, baseColorPath,
-                materialName, dirName, mapMode, "baseColorMap", outMaterials, minType, magType);
+        setTextureFromPath(scene, &mEngine, mTextures, baseColorPath, materialName, dirName,
+                mapMode, "baseColorMap", outMaterials, mAssetLoader, minType, magType);
     } else {
         outMaterials[utils::CString(materialName.c_str())]->setParameter("baseColorMap",
                 mDefaultMap, sampler);
@@ -1044,8 +1099,8 @@ void MeshAssimp::processGLTFMaterial(const aiScene* scene, const aiMaterial* mat
         material->Get("$tex.mappingfiltermin", AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, minType);
         material->Get("$tex.mappingfiltermag", AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, magType);
 
-        setTextureFromPath(scene, &mEngine, mTextures, MRPath, materialName,
-                dirName, mapMode, "metallicRoughnessMap", outMaterials, minType, magType);
+        setTextureFromPath(scene, &mEngine, mTextures, MRPath, materialName, dirName, mapMode,
+                "metallicRoughnessMap", outMaterials, mAssetLoader, minType, magType);
     } else {
         outMaterials[utils::CString(materialName.c_str())]->setParameter("metallicRoughnessMap",
                 mDefaultMap, sampler);
@@ -1061,8 +1116,8 @@ void MeshAssimp::processGLTFMaterial(const aiScene* scene, const aiMaterial* mat
         unsigned int magType = 0;
         material->Get("$tex.mappingfiltermin", aiTextureType_LIGHTMAP, 0, minType);
         material->Get("$tex.mappingfiltermag", aiTextureType_LIGHTMAP, 0, magType);
-        setTextureFromPath(scene, &mEngine, mTextures, AOPath, materialName,
-                dirName, mapMode, "aoMap", outMaterials, minType, magType);
+        setTextureFromPath(scene, &mEngine, mTextures, AOPath, materialName, dirName, mapMode,
+                "aoMap", outMaterials, mAssetLoader, minType, magType);
     } else {
         outMaterials[utils::CString(materialName.c_str())]->setParameter("aoMap", mDefaultMap,
                 sampler);
@@ -1074,8 +1129,8 @@ void MeshAssimp::processGLTFMaterial(const aiScene* scene, const aiMaterial* mat
         unsigned int magType = 0;
         material->Get("$tex.mappingfiltermin", aiTextureType_NORMALS, 0, minType);
         material->Get("$tex.mappingfiltermag", aiTextureType_NORMALS, 0, magType);
-        setTextureFromPath(scene, &mEngine, mTextures, normalPath, materialName,
-                dirName, mapMode, "normalMap", outMaterials, minType, magType);
+        setTextureFromPath(scene, &mEngine, mTextures, normalPath, materialName, dirName, mapMode,
+                "normalMap", outMaterials, mAssetLoader, minType, magType);
     } else {
         outMaterials[utils::CString(materialName.c_str())]->setParameter("normalMap",
                 mDefaultNormalMap, sampler);
@@ -1087,8 +1142,8 @@ void MeshAssimp::processGLTFMaterial(const aiScene* scene, const aiMaterial* mat
         unsigned int magType = 0;
         material->Get("$tex.mappingfiltermin", aiTextureType_EMISSIVE, 0, minType);
         material->Get("$tex.mappingfiltermag", aiTextureType_EMISSIVE, 0, magType);
-        setTextureFromPath(scene, &mEngine, mTextures, emissivePath, materialName,
-                dirName, mapMode, "emissiveMap", outMaterials, minType, magType);
+        setTextureFromPath(scene, &mEngine, mTextures, emissivePath, materialName, dirName, mapMode,
+                "emissiveMap", outMaterials, mAssetLoader, minType, magType);
     }  else {
         outMaterials[utils::CString(materialName.c_str())]->setParameter("emissiveMap", mDefaultMap,
                 sampler);

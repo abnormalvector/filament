@@ -17,9 +17,9 @@
 #include "material_sandbox.h"
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include <filamentapp/AssetLoader.h>
+#include <filamentapp/DesktopAssetLoader.h>
 #include <filamentapp/FilamentApp2.h>
 #include <filamentapp/IBL.h>
 #include <filamentapp/MeshAssimp.h>
@@ -51,11 +51,11 @@
 #include <math/vec4.h>
 
 #include <imgui.h>
+#include <samples/SampleConfig.h>
 
 #include <iostream>
 #include <map>
 #include <ranges>
-#include <string>
 #include <vector>
 
 using namespace math;
@@ -63,34 +63,60 @@ using namespace filament;
 using namespace filamat;
 using namespace utils;
 
-static std::vector<Path> g_filenames;
-
-static Scene* g_scene = nullptr;
-
-std::unique_ptr<MeshAssimp> g_meshSet;
-static std::map<utils::CString, MaterialInstance*> g_meshMaterialInstances;
-static SandboxParameters g_params;
-static ColorGradingOptions g_lastColorGradingOptions;
-static ColorGrading* g_colorGrading = nullptr;
-static SampleConfig g_config;
-FilamentApp2* g_filamentApp = nullptr;
+namespace {
 
 struct App {
     FilamentApp2* filamentApp = nullptr;
     SampleConfig config;
 };
 
-static bool g_shadowPlane = false;
-static bool g_singleMode = false;
-static float g_rangePlot[1024 * 3];
-static float g_curvePlot[1024 * 3];
+Scene* g_scene = nullptr;
 
-constexpr static ImVec2 verticalSliderSize(18.0f, 160.0f);
-constexpr static ImVec2 plotLinesSize(320.0f, 160.0f);
-constexpr static ImVec2 plotLinesWideSize(480.0f, 120.0f);
+std::unique_ptr<MeshAssimp> g_meshSet;
+filament::app::AssetLoader* g_assetLoader = nullptr;
+std::map<utils::CString, MaterialInstance*> g_meshMaterialInstances;
+SandboxParameters g_params;
+ColorGradingOptions g_lastColorGradingOptions;
+ColorGrading* g_colorGrading = nullptr;
+SampleConfig g_config;
+FilamentApp2* g_filamentApp = nullptr;
 
-static void cleanup(Engine* engine, View*, Scene*) {
+bool g_shadowPlane = false;
+bool g_singleMode = false;
+float g_meshScale = 1.0f;
+float g_rangePlot[1024 * 3];
+float g_curvePlot[1024 * 3];
+
+constexpr ImVec2 verticalSliderSize(18.0f, 160.0f);
+constexpr ImVec2 plotLinesSize(320.0f, 160.0f);
+constexpr ImVec2 plotLinesWideSize(480.0f, 120.0f);
+
+struct GroundPlane {
+    VertexBuffer* vb = nullptr;
+    IndexBuffer* ib = nullptr;
+    Material* mat = nullptr;
+    Entity renderable;
+};
+
+GroundPlane g_groundPlane;
+
+void cleanup(Engine* engine, View*, Scene*) {
     g_meshSet.reset(nullptr);
+    g_assetLoader = nullptr;
+
+    if (g_groundPlane.renderable) {
+        engine->destroy(g_groundPlane.renderable);
+        EntityManager::get().destroy(g_groundPlane.renderable);
+    }
+    if (g_groundPlane.mat) {
+        engine->destroy(g_groundPlane.mat);
+    }
+    if (g_groundPlane.vb) {
+        engine->destroy(g_groundPlane.vb);
+    }
+    if (g_groundPlane.ib) {
+        engine->destroy(g_groundPlane.ib);
+    }
 
     for (const auto& material: g_meshMaterialInstances | std::views::values) {
         engine->destroy(material);
@@ -113,21 +139,28 @@ static void cleanup(Engine* engine, View*, Scene*) {
     em.destroy(g_params.spotLight);
 }
 
-static void setup(Engine* engine, View*, Scene* scene) {
+void setup(Engine* engine, View*, Scene* scene) {
     g_scene = scene;
 
-    g_meshSet = std::make_unique<MeshAssimp>(*engine);
+    g_meshSet = std::make_unique<MeshAssimp>(*engine, g_assetLoader);
 
     createInstances(g_params, *engine);
 
-    for (auto& filename : g_filenames) {
+    for (const auto& fname : g_config.positionalArgs) {
+        Path filename(fname.c_str_safe());
         g_meshSet->addFromFile(filename, g_meshMaterialInstances);
+    }
+    if (g_config.positionalArgs.empty()) {
+        g_meshSet->addFromFile("assets/models/material_sphere/material_sphere.obj",
+                g_meshMaterialInstances);
     }
 
     auto& tcm = engine->getTransformManager();
-    auto ei = tcm.getInstance(g_meshSet->getRenderables()[0]);
-    tcm.setTransform(ei, mat4f{ mat3f(g_config.scale), float3(0.0f, 0.0f, -4.0f) } *
-            tcm.getWorldTransform(ei));
+    if (!g_meshSet->getRenderables().empty()) {
+        auto ei = tcm.getInstance(g_meshSet->getRenderables()[0]);
+        tcm.setTransform(ei,
+                mat4f{ mat3f(g_meshScale), float3(0.0f, 0.0f, -4.0f) } * tcm.getWorldTransform(ei));
+    }
 
     size_t count = 0;
     auto& rcm = engine->getRenderableManager();
@@ -143,8 +176,8 @@ static void setup(Engine* engine, View*, Scene* scene) {
                 rcm.setMaterialInstanceAt(instance, i, g_params.materialInstance[MATERIAL_LIT]);
             }
         } else {
-            ei = tcm.getInstance(renderable);
-            tcm.setTransform(ei, mat4f{ mat3f(g_config.scale), float3(0.0f, 0.0f, -3.0f) } *
+            auto ei = tcm.getInstance(renderable);
+            tcm.setTransform(ei, mat4f{ mat3f(g_meshScale), float3(0.0f, 0.0f, -3.0f) } *
                     tcm.getWorldTransform(ei));
         }
         count++;
@@ -165,7 +198,7 @@ static void setup(Engine* engine, View*, Scene* scene) {
                 .build(*engine);
         shadowMaterial->setDefaultParameter("strength", 0.7f);
 
-        const static uint32_t indices[] = {
+        static constexpr uint32_t indices[] = {
                 0, 1, 2, 2, 3, 0
         };
 
@@ -176,7 +209,7 @@ static void setup(Engine* engine, View*, Scene* scene) {
                 {  10, 0, -10 },
         };
 
-        short4 tbn = packSnorm16(
+        short4 const tbn = packSnorm16(
                 mat3f::packTangentFrame(
                         mat3f{
                                 float3{ 1.0f, 0.0f, 0.0f },
@@ -185,7 +218,7 @@ static void setup(Engine* engine, View*, Scene* scene) {
                         }
                 ).xyzw);
 
-        const static short4 normals[] { tbn, tbn, tbn, tbn };
+        static const short4 normals[] { tbn, tbn, tbn, tbn };
 
         VertexBuffer* vertexBuffer = VertexBuffer::Builder()
                 .vertexCount(4)
@@ -223,6 +256,13 @@ static void setup(Engine* engine, View*, Scene* scene) {
 
         tcm.setTransform(tcm.getInstance(planeRenderable),
                 mat4f::translation(float3{ 0, -1, -4 }));
+
+        g_groundPlane = {
+            .vb = vertexBuffer,
+            .ib = indexBuffer,
+            .mat = shadowMaterial,
+            .renderable = planeRenderable,
+        };
     }
 
     if (auto* ibl = g_filamentApp->getIBL()) {
@@ -243,7 +283,7 @@ static void setup(Engine* engine, View*, Scene* scene) {
     g_params.bloomOptions.dirt = g_filamentApp->getDirtTexture();
 }
 
-static MaterialInstance* updateInstances(SandboxParameters& params) {
+MaterialInstance* updateInstances(SandboxParameters& params) {
     int material = params.currentMaterialModel;
     if (material == MATERIAL_MODEL_LIT) {
         if (params.currentBlending == BLENDING_TRANSPARENT) material = MATERIAL_TRANSPARENT;
@@ -275,6 +315,8 @@ static MaterialInstance* updateInstances(SandboxParameters& params) {
         if (!hasRefraction) {
             materialInstance->setParameter("reflectance", params.reflectance);
         }
+        materialInstance->setParameter("secondRoughness", params.secondRoughness);
+        materialInstance->setParameter("secondRoughnessWeight", params.secondRoughnessWeight);
         materialInstance->setParameter("sheenColor", RgbType::sRGB, params.sheenColor);
         materialInstance->setParameter("sheenRoughness", params.sheenRoughness);
         materialInstance->setParameter("clearCoat", params.clearCoat);
@@ -328,7 +370,7 @@ static MaterialInstance* updateInstances(SandboxParameters& params) {
     return materialInstance;
 }
 
-static void computeRangePlot(SandboxParameters &parameters) {
+void computeRangePlot(SandboxParameters& parameters) {
     float4& ranges = parameters.colorGradingOptions.ranges;
     ranges.y = clamp(ranges.y, ranges.x + 1e-5f, ranges.w - 1e-5f); // darks
     ranges.z = clamp(ranges.z, ranges.x + 1e-5f, ranges.w - 1e-5f); // lights
@@ -343,7 +385,7 @@ static void computeRangePlot(SandboxParameters &parameters) {
     }
 }
 
-static void rangePlotSeriesStart(const int series) {
+void rangePlotSeriesStart(const int series) {
     // ReSharper disable once CppDefaultCaseNotHandledInSwitchStatement
     switch (series) { // NOLINT(*-multiway-paths-covered)
         case 0:
@@ -361,13 +403,13 @@ static void rangePlotSeriesStart(const int series) {
     }
 }
 
-static void rangePlotSeriesEnd(const int series) {
+void rangePlotSeriesEnd(const int series) {
     if (series < 3) {
         ImGui::PopStyleColor();
     }
 }
 
-static float getRangePlotValue(const int series, void* data, const int index) {
+float getRangePlotValue(const int series, void* data, const int index) {
     return static_cast<float*>(data)[series * 1024 + index];
 }
 
@@ -382,7 +424,7 @@ inline float3 curves(float3 v, float3 shadowGamma, float3 midPoint, float3 highl
     };
 }
 
-static void computeCurvePlot(SandboxParameters &parameters) {
+void computeCurvePlot(SandboxParameters& parameters) {
     ColorGradingOptions &colorGrading = parameters.colorGradingOptions;
     for (size_t i = 0; i < 1024; i++) {
         float3 x{static_cast<float>(i) / 1024.0f * 2.0f};
@@ -393,13 +435,13 @@ static void computeCurvePlot(SandboxParameters &parameters) {
     }
 }
 
-static void tooltipFloat(const float value) {
+void tooltipFloat(const float value) {
     if (ImGui::IsItemActive() || ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%.2f", value);
     }
 }
 
-static void pushSliderColors(const float hue) {
+void pushSliderColors(const float hue) {
     ImGui::PushStyleColor(ImGuiCol_FrameBg,
         static_cast<ImVec4>(ImColor::HSV(hue, 0.5f, 0.5f)));
     ImGui::PushStyleColor(ImGuiCol_FrameBgHovered,
@@ -410,9 +452,9 @@ static void pushSliderColors(const float hue) {
         static_cast<ImVec4>(ImColor::HSV(hue, 0.9f, 0.9f)));
 }
 
-static void popSliderColors() { ImGui::PopStyleColor(4); }
+void popSliderColors() { ImGui::PopStyleColor(4); }
 
-static void gui(Engine* engine, View*) {
+void gui(Engine* engine, View*) {
     auto& params = g_params;
     ImGui::SetNextWindowSize(ImVec2(0.0f, 0.0f));
     ImGui::Begin("Parameters");
@@ -451,6 +493,13 @@ static void gui(Engine* engine, View*) {
                         ImGui::SliderFloat("Metallic", &params.metallic, 0.0f, 1.0f);
                         ImGui::SliderFloat("Reflectance", &params.reflectance, 0.0f, 1.0f);
                     }
+                }
+
+                if (params.currentMaterialModel != MATERIAL_MODEL_CLOTH &&
+                    params.currentMaterialModel != MATERIAL_MODEL_SUBSURFACE &&
+                    params.currentMaterialModel != MATERIAL_MODEL_SPECGLOSS) {
+                    ImGui::SliderFloat("2nd Roughness", &params.secondRoughness, 0.0f, 1.0f);
+                    ImGui::SliderFloat("2nd Roughness Weight", &params.secondRoughnessWeight, 0.0f, 1.0f);
                 }
 
                 if (params.currentMaterialModel != MATERIAL_MODEL_CLOTH &&
@@ -887,7 +936,7 @@ static void gui(Engine* engine, View*) {
             params.spotLightConeAngle);
 }
 
-static void preRender(Engine* engine, View* view, Scene*, Renderer* renderer) {
+void preRender(Engine* engine, View* view, Scene*, Renderer* renderer) {
     view->setAntiAliasing(g_params.fxaa ? View::AntiAliasing::FXAA : View::AntiAliasing::NONE);
     view->setDithering(g_params.dithering ? View::Dithering::TEMPORAL : View::Dithering::NONE);
     view->setBloomOptions(g_params.bloomOptions);
@@ -945,19 +994,22 @@ static void preRender(Engine* engine, View* view, Scene*, Renderer* renderer) {
     camera.setExposure(g_params.cameraAperture, 1.0f / g_params.cameraSpeed, g_params.cameraISO);
 }
 
+} // namespace
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
     auto app = std::make_shared<App>();
-    app->config = config;
     g_config = config;
+    g_assetLoader = loader;
+    g_shadowPlane = config.getBool("shadow-plane");
+    g_singleMode = config.getBool("single-mode");
+    config.dirt = config.getString("dirt");
+    g_meshScale = config.getFloat("scale", 1.0f);
+    app->config = config;
 
     g_params.bloomOptions.enabled = true;
 
-    auto fApp = FilamentApp2::Builder()
-                        .displayManager(dm)
-                        .title(config.title)
-                        .scale(config.scale)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .imgui(gui)
@@ -968,58 +1020,39 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() {
+    return {
+        samples::Parameter::makeBool("shadow-plane", 'p', "Enable shadow-receiving ground plane",
+                false),
+        samples::Parameter::makeBool("single-mode", 'n', "Single object mode", false),
+        samples::Parameter::makeString("dirt", 'd', "Path to a dirt texture", ""),
+        samples::Parameter::makeFloat("scale", 's', "Applies uniform scale", 1.0f),
+    };
+}
+
 #ifndef __ANDROID__
 int main(const int argc, char* argv[]) {
     SampleConfig config;
-    static constexpr const char* CUSTOM_OPTSTR = "pnd:";
-    static const utils::getopt::option CUSTOM_OPTIONS[] = {
-        { "shadow-plane", utils::getopt::no_argument, nullptr, 'p' },
-        { "single-mode", utils::getopt::no_argument, nullptr, 'n' },
-        { "dirt", utils::getopt::required_argument, nullptr, 'd' }, { nullptr, 0, nullptr, 0 }
-    };
-    auto customHandler = [&config](int opt, const utils::CString& arg) -> bool {
-        switch (opt) {
-            case 'p':
-                g_shadowPlane = true;
-                return true;
-            case 'n':
-                g_singleMode = true;
-                return true;
-            case 'd':
-                config.dirt = arg;
-                return true;
-        }
-        return false;
-    };
     samples::CommandLineSpecification spec = {
         .sampleDescription = "MATERIAL_SANDBOX is a tool for testing Filament materials.",
-        .positionalArgsDescription = "<mesh files (.obj, .fbx, .filamesh)>",
-        .requiredPositionalArgCount = 1,
-        .customOptionsHelp = "   --shadow-plane, -p\n"
-                             "       Enable shadow-receiving ground plane\n\n"
-                             "   --single-mode, -n\n"
-                             "       Single object mode\n\n"
-                             "   --dirt=<path>, -d <path>\n"
-                             "       Path to a dirt texture\n",
-        .customHandler = customHandler,
-        .customOptStr = CUSTOM_OPTSTR,
-        .customOptions = CUSTOM_OPTIONS,
+        .positionalArgsDescription = { "mesh files (.obj, .fbx, .filamesh)" },
+        .parameters = createAppParameters(),
     };
 
-    const int optind = samples::handleCommandLineArguments(argc, argv, &config, spec);
+    samples::handleCommandLineArguments(argc, argv, &config, spec);
     auto dm = samples::getDisplayManager(config);
+    auto loader = samples::getAssetLoader(config);
 
-    for (int i = optind; i < argc; i++) {
-        Path filename = argv[i];
-        if (!filename.exists()) {
-            std::cerr << "file " << argv[i] << " not found!" << std::endl;
+    for (const auto& fname : config.positionalArgs) {
+        Path filename(fname.c_str_safe());
+        if (!loader->exists(filename)) {
+            std::cerr << "file " << filename << " not found!" << std::endl;
             return 1;
         }
-        g_filenames.push_back(filename);
     }
 
     config.title = "Material Sandbox";
-    auto fApp = createSampleApp(config, dm.get(), nullptr);
+    auto fApp = createSampleApp(config, dm.get(), loader.get());
     fApp->run();
     return 0;
 }

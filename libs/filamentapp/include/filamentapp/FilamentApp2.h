@@ -18,7 +18,6 @@
 #define TNT_FILAMENT_SAMPLE_FILAMENTAPP2_H
 
 #include "AppEvent.h"
-#include "Config.h"
 #include "Cube.h"
 #include "Grid.h"
 #include "IBL.h"
@@ -31,9 +30,11 @@
 #include <utils/Entity.h>
 #include <utils/Path.h>
 
+#include <atomic>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -63,9 +64,11 @@ class WebGPUPlatform;
 
 namespace filament::app {
 class DisplayManager;
+class AssetLoader;
+class AssetWriter;
 } // namespace filament::app
 
-class FilamentApp2 {
+class UTILS_PUBLIC FilamentApp2 {
 public:
     using WebGPUBackend = filament::Engine::Backend;
     enum class DisplayManager { SDL, WEB };
@@ -81,7 +84,13 @@ public:
     using AnimCallback = std::function<void(filament::Engine*, filament::View*, double now)>;
     using ResizeCallback = std::function<void(filament::Engine*, filament::View*)>;
     using DropCallback = std::function<void(std::string_view)>;
+    using SurfaceCreatedCallback = std::function<void(filament::Engine*)>;
+    using SurfaceDestroyedCallback = std::function<void(filament::Engine*)>;
 
+private:
+    static constexpr uint32_t MAX_WARMUP_FRAMES = std::numeric_limits<uint32_t>::max();
+
+public:
     class Builder {
     public:
         Builder() = default;
@@ -155,6 +164,41 @@ public:
             mAsynchronousMode = asynchronousMode;
             return *this;
         }
+        Builder& screenshotPath(utils::CString const& screenshotPath) {
+            mScreenshotPath = screenshotPath;
+            return *this;
+        }
+        Builder& warmupFrames(int warmupFrames) {
+            mWarmupFrames = warmupFrames;
+            return *this;
+        }
+        Builder& fixedTimeStep(float fixedTimeStep) {
+            mFixedTimeStep = fixedTimeStep;
+            return *this;
+        }
+
+        /**
+         * Sets a custom AssetLoader for the application.
+         *
+         * @param assetLoader Pointer to an AssetLoader implementation.
+         *                    If nullptr or not set, the app will use a default DesktopAssetLoader.
+         */
+        Builder& assetLoader(filament::app::AssetLoader* assetLoader) {
+            mAssetLoader = assetLoader;
+            return *this;
+        }
+
+        /**
+         * Sets a custom AssetWriter for the application.
+         *
+         * @param assetWriter Pointer to an AssetWriter implementation.
+         *                    If nullptr or not set, the app will use a default DesktopAssetWriter.
+         */
+        Builder& assetWriter(filament::app::AssetWriter* assetWriter) {
+            mAssetWriter = assetWriter;
+            return *this;
+        }
+
         /**
          * Sets a custom DisplayManager for the application.
          *
@@ -253,6 +297,26 @@ public:
         }
 
         /**
+         * Sets the callback invoked when a surface has been created.
+         *
+         * @param callback A callback function invoked upon surface creation.
+         */
+        Builder& onSurfaceCreated(SurfaceCreatedCallback callback) {
+            mSurfaceCreatedCallback = callback;
+            return *this;
+        }
+
+        /**
+         * Sets the callback invoked when a surface has been destroyed.
+         *
+         * @param callback A callback function invoked upon surface destruction.
+         */
+        Builder& onSurfaceDestroyed(SurfaceDestroyedCallback callback) {
+            mSurfaceDestroyedCallback = callback;
+            return *this;
+        }
+
+        /**
          * Creates a FilamentApp2 instance configured with the parameters provided to the Builder.
          *
          * @return A unique_ptr owning the constructed FilamentApp2.
@@ -279,7 +343,12 @@ public:
         WebGPUBackend mForcedWebGPUBackend = WebGPUBackend::DEFAULT;
         DisplayManager mDisplayManagerConfig = DisplayManager::SDL;
         filament::backend::AsynchronousMode mAsynchronousMode = filament::backend::AsynchronousMode::NONE;
+        utils::CString mScreenshotPath;
+        uint32_t mWarmupFrames = MAX_WARMUP_FRAMES;
+        float mFixedTimeStep = 0.0f;
         filament::app::DisplayManager* mDisplayManager = nullptr;
+        filament::app::AssetLoader* mAssetLoader = nullptr;
+        filament::app::AssetWriter* mAssetWriter = nullptr;
         SetupCallback mSetup;
         CleanupCallback mCleanup;
         PreRenderCallback mPreRender;
@@ -288,11 +357,17 @@ public:
         AnimCallback mAnimation;
         ResizeCallback mResize;
         DropCallback mDropHandler;
+        SurfaceCreatedCallback mSurfaceCreatedCallback;
+        SurfaceDestroyedCallback mSurfaceDestroyedCallback;
     };
 
     ~FilamentApp2();
 
+    void init();
     void run();
+    bool doFrame();
+    void shutdown();
+    bool isInitialized() const noexcept { return mInitialized; }
 
     void reconfigureCameras() { mReconfigureCameras = true; }
 
@@ -307,10 +382,13 @@ public:
 
     void close() { mClosed = true; }
 
-    void onSurfaceCreated(void* nativeWindow);
+    void onSurfaceCreated();
     void onSurfaceChanged(int width, int height);
     void onSurfaceDestroyed();
-    void onTouchEvent(int action, float x, float y);
+
+    filament::app::DisplayManager* getDisplayManager() const noexcept { return mDisplayManager; }
+    filament::app::AssetLoader* getAssetLoader() const noexcept { return mAssetLoader; }
+    filament::app::AssetWriter* getAssetWriter() const noexcept { return mAssetWriter; }
 
     void setSidebarWidth(int width) {
         mCameraParams.sidebarWidth = width;
@@ -346,15 +424,6 @@ public:
     FilamentApp2(FilamentApp2&& rhs) = delete;
     FilamentApp2& operator=(const FilamentApp2& rhs) = delete;
     FilamentApp2& operator=(FilamentApp2&& rhs) = delete;
-
-    /**
-     * Returns the path to the Filament root for loading assets. This is determined from the
-     * executable folder, which allows users to launch samples from any folder.
-     *
-     * This takes into account multi-configuration CMake generators, like Visual Studio or Xcode,
-     * that have different executable paths compared to single-configuration generators, like Ninja.
-     */
-    static const utils::Path& getRootAssetsPath();
 
 private:
     using CameraManipulator = filament::camutils::Manipulator<float>;
@@ -423,9 +492,6 @@ private:
     void loadIBL();
     void loadDirt();
 
-    bool doFrame();
-    void shutdown();
-
     void mouseDown(int button, ssize_t x, ssize_t y);
     void mouseUp(ssize_t x, ssize_t y);
     void mouseMoved(ssize_t x, ssize_t y);
@@ -437,11 +503,16 @@ private:
     void configureCamerasForWindow(WindowCameraParams const& camera);
     void fixupMouseCoordinatesForHdpi(ssize_t& x, ssize_t& y) const;
 
+    void captureScreenshot(utils::CString const& filepath);
+
+    bool mInitialized = false;
     filament::Engine* mEngine = nullptr;
     filament::Scene* mScene = nullptr;
     std::unique_ptr<IBL> mIBL;
     filament::Texture* mDirt = nullptr;
-    bool mClosed = false;
+    // Atomic because close() can be called from asynchronous driver/readback callbacks while
+    // the main loop reads mClosed in doFrame().
+    std::atomic<bool> mClosed{ false };
     double mTime = 0;
 
     filament::Material const* mDefaultMaterial = nullptr;
@@ -449,11 +520,13 @@ private:
     filament::Material const* mDepthMaterial = nullptr;
     filament::MaterialInstance* mDepthMI = nullptr;
     std::unique_ptr<FilamentAppGui> mAppGui;
-    AnimCallback mAnimation;
-    ResizeCallback mResize;
-    DropCallback mDropHandler;
+    AnimCallback const mAnimation;
+    ResizeCallback const mResize;
+    DropCallback const mDropHandler;
+    SurfaceCreatedCallback const mSurfaceCreatedCallback;
+    SurfaceDestroyedCallback const mSurfaceDestroyedCallback;
     size_t mSkippedFrames = 0;
-    utils::CString mWindowTitle;
+    utils::CString const mWindowTitle;
     std::vector<filament::View*> mOffscreenViews;
     WindowCameraParams mCameraParams{};
     bool mReconfigureCameras = false;
@@ -462,7 +535,11 @@ private:
     uint8_t mDirectionalShadowFrustumEnabled = 0x2;
     uint8_t mCameraFrustumEnabled = 0x2;
 
-    filament::app::DisplayManager* mDisplayManager = nullptr;
+    filament::app::DisplayManager* const mDisplayManager;
+    std::unique_ptr<filament::app::AssetLoader> mDefaultAssetLoader;
+    filament::app::AssetLoader* const mAssetLoader;
+    std::unique_ptr<filament::app::AssetWriter> mDefaultAssetWriter;
+    filament::app::AssetWriter* const mAssetWriter;
 
     filament::backend::Platform* mVulkanPlatform = nullptr;
     filament::backend::Platform* mWebGPUPlatform = nullptr;
@@ -497,29 +574,32 @@ private:
     // Keep track of which view should receive a key's keyUp event.
     std::unordered_map<filament::app::AppKey, CView*> mKeyEventTarget;
 
-    uint32_t mWindowWidth = 1024;
-    uint32_t mWindowHeight = 640;
-    utils::CString mIblDirectory;
-    utils::CString mDirtPath;
-    float mScale = 1.0f;
+    uint32_t const mInitialWindowWidth = 1024;
+    uint32_t const mInitialWindowHeight = 640;
+    utils::CString const mIblDirectory;
+    utils::CString const mDirtPath;
     filament::Engine::Backend mBackend = filament::Engine::Backend::DEFAULT;
     filament::backend::FeatureLevel mFeatureLevel = filament::backend::FeatureLevel::FEATURE_LEVEL_3;
-    filament::camutils::Mode mCameraMode = filament::camutils::Mode::ORBIT;
-    bool mResizeable = true;
-    bool mHeadless = false;
-    int mStereoscopicEyeCount = 2;
-    uint8_t mSamples = 1;
-    utils::CString mVulkanGPUHint;
-    WebGPUBackend mForcedWebGPUBackend = WebGPUBackend::DEFAULT;
-    DisplayManager mDisplayManagerConfig = DisplayManager::SDL;
-    filament::backend::AsynchronousMode mAsynchronousMode = filament::backend::AsynchronousMode::NONE;
-    SetupCallback mSetupCallback;
-    CleanupCallback mCleanupCallback;
-    ImGuiCallback mImguiCallback{};
-    PreRenderCallback mPreRender{};
-    PostRenderCallback mPostRender{};
+    filament::camutils::Mode const mCameraMode;
+    bool const mResizeable = true;
+    bool const mHeadless = false;
+    int const mStereoscopicEyeCount = 2;
+    utils::CString const mVulkanGPUHint;
+    WebGPUBackend const mForcedWebGPUBackend = WebGPUBackend::DEFAULT;
+    filament::backend::AsynchronousMode const mAsynchronousMode = filament::backend::AsynchronousMode::NONE;
+    SetupCallback const mSetupCallback;
+    CleanupCallback const mCleanupCallback;
+    ImGuiCallback const mImguiCallback{};
+    PreRenderCallback const mPreRender{};
+    PostRenderCallback const mPostRender{};
     bool mMousePressed[3] = { false };
     bool mIsSplitView = false;
+
+    utils::CString const mScreenshotPath;
+    uint32_t mWarmupFrames = MAX_WARMUP_FRAMES;
+    float const mFixedTimeStep = 0.0f;
+    uint32_t mCurrentFrame = 0;
+    double mLastDisplayManagerTime = 0.0;
 
     std::unique_ptr<Cube> mCameraCube;
     std::unique_ptr<Grid> mCameraGrid;

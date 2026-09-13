@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include <filamentapp/AssetLoader.h>
 #include <filamentapp/FilamentApp2.h>
@@ -25,15 +24,19 @@
 #include <filament/Skybox.h>
 #include <filament/View.h>
 
+#include <samples/SampleConfig.h>
+
 #include <cmath>
 
 using namespace filament;
 
+namespace {
 struct App {
     FilamentApp2* filamentApp;
     SampleConfig config;
     Skybox* skybox;
 };
+} // namespace
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
@@ -46,12 +49,11 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         view->setPostProcessingEnabled(false);
     };
 
-    auto cleanup = [app](Engine*, View*, Scene*) {};
+    auto cleanup = [app](Engine* engine, View*, Scene*) {
+        engine->destroy(app->skybox);
+    };
 
-    auto fApp = FilamentApp2::Builder()
-                        .displayManager(dm)
-                        .title(app->config.title)
-                        .backend(app->config.backend)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .animation([app](Engine*, View* view, double now) {
@@ -67,14 +69,18 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() { return {}; }
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
     SampleConfig config;
     config.title = "strobecolor";
-    samples::handleCommandLineArguments(argc, argv, &config);
+    samples::handleCommandLineArguments(argc, argv, &config,
+            { .parameters = createAppParameters() });
 
     auto dm = samples::getDisplayManager(config);
-    auto fApp = createSampleApp(config, dm.get(), nullptr);
+    auto loader = samples::getAssetLoader(config);
+    auto fApp = createSampleApp(config, dm.get(), loader.get());
     fApp->run();
 
     return 0;

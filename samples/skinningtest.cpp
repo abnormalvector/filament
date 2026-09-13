@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/resources.h"
 
@@ -39,6 +38,8 @@
 #include <utils/getopt.h>
 #include <utils/Path.h>
 
+#include <samples/SampleConfig.h>
+
 #include <cmath>
 #include <iostream>
 
@@ -49,21 +50,25 @@ using utils::Path;
 using utils::FixedCapacityVector;
 using namespace filament::math;
 
+namespace {
+
 struct App {
-    FilamentApp2* filamentApp;
-    VertexBuffer* vbs[10];
+    FilamentApp2* filamentApp = nullptr;
+    VertexBuffer* vbs[10] = {};
     size_t vbCount = 0;
-    IndexBuffer *ib, *ib2;
-    Material* mat;
-    Camera* cam;
+    IndexBuffer* ib = nullptr;
+    IndexBuffer* ib2 = nullptr;
+    Material* mat = nullptr;
+    Camera* cam = nullptr;
     Entity camera;
-    Skybox* skybox;
-    Entity renderables[4];
-    SkinningBuffer *sb, *sb2;
-    MorphTargetBuffer *mt;
-    BufferObject* bos[10];
+    Skybox* skybox = nullptr;
+    Entity renderables[4] = {};
+    SkinningBuffer* sb = nullptr;
+    SkinningBuffer* sb2 = nullptr;
+    MorphTargetBuffer* mt = nullptr;
+    BufferObject* bos[10] = {};
     size_t boCount = 0;
-    size_t bonesPerVertex;
+    size_t bonesPerVertex = 0;
     FixedCapacityVector<FixedCapacityVector<filament::math::float2>>
         boneDataPerPrimitive,
         boneDataPerPrimitiveMulti;
@@ -75,7 +80,7 @@ struct Vertex {
     uint32_t color;
 };
 
-static const Vertex TRIANGLE_VERTICES_1[6] = {
+const Vertex TRIANGLE_VERTICES_1[6] = {
     {{ 1, 0}, 0xff00ff00u},
     {{ cos(M_PI * 1 / 3), sin(M_PI * 1 / 3)}, 0xff330088u},
     {{ cos(M_PI * 2 / 3), sin(M_PI * 2 / 3)}, 0xff880033u},
@@ -84,7 +89,7 @@ static const Vertex TRIANGLE_VERTICES_1[6] = {
     {{ cos(M_PI * 5 / 3), sin(M_PI * 5 / 3)}, 0xff880033u},
 };
 
-static const Vertex TRIANGLE_VERTICES_2[6] = {
+const Vertex TRIANGLE_VERTICES_2[6] = {
     {{ 1, 0}, 0xff0000ffu},
     {{ cos(M_PI * 1 / 3), sin(M_PI * 1 / 3)}, 0xfff055ffu},
     {{ cos(M_PI * 2 / 3), sin(M_PI * 2 / 3)}, 0xff880088u},
@@ -93,7 +98,7 @@ static const Vertex TRIANGLE_VERTICES_2[6] = {
     {{ cos(M_PI * 5 / 3), sin(M_PI * 5 / 3)}, 0xff880088u},
 };
 
-static const Vertex TRIANGLE_VERTICES_3[6] = {
+const Vertex TRIANGLE_VERTICES_3[6] = {
     {{ 1, 0}, 0xfff00f88u},
     {{ cos(M_PI * 1 / 3), sin(M_PI * 1 / 3)}, 0xff00ffaau},
     {{ cos(M_PI * 2 / 3), sin(M_PI * 2 / 3)}, 0xff00ffffu},
@@ -102,40 +107,37 @@ static const Vertex TRIANGLE_VERTICES_3[6] = {
     {{ cos(M_PI * 5 / 3), sin(M_PI * 5 / 3)}, 0xff00ffffu},
 };
 
-
-static const float3 targets_pos[9] = {
+const float3 targets_pos[9] = {
   { -2, 0, 0},{ 0, 2, 0},{ 1, 0, 0},
   { 1, 1, 0},{ -1, 0, 0},{ -1, 0, 0},
   { 0, 0, 0},{ 0, 0, 0},{ 0, 0, 0}
 };
 
-static const short4 targets_tan[9] = {
+const short4 targets_tan[9] = {
   { 0, 0, 0, 0},{ 0, 0, 0, 0},{ 0, 0, 0, 0},
   { 0, 0, 0, 0},{ 0, 0, 0, 0},{ 0, 0, 0, 0},
   { 0, 0, 0, 0},{ 0, 0, 0, 0},{ 0, 0, 0, 0}};
 
-static const uint16_t skinJoints[] = { 0, 1, 2, 5,
+const uint16_t skinJoints[] = { 0, 1, 2, 5,
                                      0, 2, 3, 5,
                                      0, 3, 1, 5};
 
-static const float skinWeights[] = { 0.5f, 0.0f, 0.0f, 0.5f,
+const float skinWeights[] = { 0.5f, 0.0f, 0.0f, 0.5f,
                                      0.5f, 0.0f, 0.f, 0.5f,
                                      0.5f, 0.0f, 0.f, 0.5f,};
 
-static float2 boneDataArray[48] = {}; //indices and weights for up to 3 vertices with 8 bones
+float2 boneDataArray[48] = {}; // indices and weights for up to 3 vertices with 8 bones
 
-static constexpr uint16_t TRIANGLE_INDICES[3] = { 0, 1, 2 },
+constexpr uint16_t TRIANGLE_INDICES[3] = { 0, 1, 2 },
 TRIANGLE_INDICES_2[6] = { 0, 2, 4, 1, 3, 5 };
 
-mat4f transforms[] = {math::mat4f(1),
-                      mat4f::translation(float3(1, 0, 0)),
-                      mat4f::translation(float3(1, 1, 0)),
-                      mat4f::translation(float3(0, 1, 0)),
-                      mat4f::translation(float3(-1, 1, 0)),
-                      mat4f::translation(float3(-1, 0, 0)),
-                      mat4f::translation(float3(-1, -1, 0)),
-                      mat4f::translation(float3(0, -1, 0)),
-                      mat4f::translation(float3(1, -1, 0))};
+static const mat4f transforms[] = { math::mat4f(1), mat4f::translation(float3(1, 0, 0)),
+    mat4f::translation(float3(1, 1, 0)), mat4f::translation(float3(0, 1, 0)),
+    mat4f::translation(float3(-1, 1, 0)), mat4f::translation(float3(-1, 0, 0)),
+    mat4f::translation(float3(-1, -1, 0)), mat4f::translation(float3(0, -1, 0)),
+    mat4f::translation(float3(1, -1, 0)) };
+
+} // namespace
 
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
@@ -530,7 +532,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                 .receiveShadows(false)
                 .castShadows(false)
                 .enableSkinningBuffers(true)
-                .skinning(app->sb, 9, 0)
+                .skinning(app->sb2, 9, 0)
                 .boneIndicesAndWeights(1, app->boneDataPerPrimitiveMulti)
                 .boneIndicesAndWeights(2, app->boneDataPerPrimitive)
                 .morphing(app->mt)
@@ -549,32 +551,51 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
 
     auto cleanup = [app](Engine* engine, View*, Scene*) {
         for (auto i = 0; i < 4; i++) {
-            engine->destroy(app->renderables[i]);
+            if (app->renderables[i]) {
+                engine->destroy(app->renderables[i]);
+                EntityManager::get().destroy(app->renderables[i]);
+            }
         }
-        for (auto i = 0; i < app->boCount; i++) {
-            engine->destroy(app->bos[i]);
+        for (size_t i = 0; i < app->boCount; i++) {
+            if (app->bos[i]) {
+                engine->destroy(app->bos[i]);
+            }
         }
-        for (auto i = 0; i < app->vbCount; i++) {
-            engine->destroy(app->vbs[i]);
+        for (size_t i = 0; i < app->vbCount; i++) {
+            if (app->vbs[i]) {
+                engine->destroy(app->vbs[i]);
+            }
         }
-        engine->destroy(app->skybox);
-        engine->destroy(app->mat);
-        engine->destroy(app->ib);
-        engine->destroy(app->ib2);
-        engine->destroy(app->sb);
-        engine->destroy(app->sb2);
-        engine->destroy(app->mt);
-        engine->destroyCameraComponent(app->camera);
-        EntityManager::get().destroy(app->camera);
+        if (app->skybox) {
+            engine->destroy(app->skybox);
+        }
+        if (app->mat) {
+            engine->destroy(app->mat);
+        }
+        if (app->ib) {
+            engine->destroy(app->ib);
+        }
+        if (app->ib2) {
+            engine->destroy(app->ib2);
+        }
+        if (app->sb) {
+            engine->destroy(app->sb);
+        }
+        if (app->sb2) {
+            engine->destroy(app->sb2);
+        }
+        if (app->mt) {
+            engine->destroy(app->mt);
+        }
+        if (app->cam) {
+            engine->destroyCameraComponent(app->camera);
+            EntityManager::get().destroy(app->camera);
+        }
     };
 
 
     auto fApp =
-            FilamentApp2::Builder()
-                    .displayManager(dm)
-                    .title(app->config.title)
-                    .configDisplayManager(
-                            static_cast<FilamentApp2::DisplayManager>(app->config.displayManager))
+            samples::getBuilder(config, dm, loader)
                     .setup(setup)
                     .cleanup(cleanup)
                     .animation([app](Engine* engine, View* view, double now) {
@@ -582,8 +603,10 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                         const uint32_t w = view->getViewport().width;
                         const uint32_t h = view->getViewport().height;
                         const float aspect = (float) w / h;
-                        app->cam->setProjection(Camera::Projection::ORTHO, -aspect * ZOOM,
-                                aspect * ZOOM, -ZOOM, ZOOM, 0, 1);
+                        if (app->cam) {
+                            app->cam->setProjection(Camera::Projection::ORTHO, -aspect * ZOOM,
+                                    aspect * ZOOM, -ZOOM, ZOOM, 0, 1);
+                        }
 
                         auto& rm = engine->getRenderableManager();
 
@@ -611,29 +634,39 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                         trans[offset] = transA[offset];
                         trans2[offset] = transA[(offset + 3) % 9];
 
-                        app->sb->setBones(*engine, trans, 9, 0);
-                        app->sb2->setBones(*engine, trans2, 9, 0);
+                        if (app->sb) {
+                            app->sb->setBones(*engine, trans, 9, 0);
+                        }
+                        if (app->sb2) {
+                            app->sb2->setBones(*engine, trans2, 9, 0);
+                        }
 
                         // Morph targets (blendshapes) animation
                         float z = (float) (sin(now) / 2.f + 0.5f);
                         float weights[] = { 1 - z, 0, z };
-                        rm.setMorphWeights(rm.getInstance(app->renderables[0]), weights, 3, 0);
-                        rm.setMorphWeights(rm.getInstance(app->renderables[1]), weights, 3, 0);
-                        rm.setMorphWeights(rm.getInstance(app->renderables[2]), weights, 3, 0);
-                        rm.setMorphWeights(rm.getInstance(app->renderables[3]), weights, 3, 0);
+                        for (int i = 0; i < 4; i++) {
+                            if (app->renderables[i]) {
+                                rm.setMorphWeights(rm.getInstance(app->renderables[i]), weights, 3,
+                                        0);
+                            }
+                        }
                     })
                     .build();
     app->filamentApp = fApp.get();
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() { return {}; }
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
     SampleConfig config;
     config.title = "skinning test with more than 4 bones per vertex";
-    int optind = samples::handleCommandLineArguments(argc, argv, &config);
+    samples::handleCommandLineArguments(argc, argv, &config,
+            { .parameters = createAppParameters() });
     auto dm = samples::getDisplayManager(config);
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto loader = samples::getAssetLoader(config);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
     return 0;
 }

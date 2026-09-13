@@ -23,6 +23,7 @@
 #include <utils/Mutex.h>
 #include <utils/Panic.h>
 
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
@@ -411,14 +412,6 @@ void HtmlDisplayManager::WebSocketHandler::handleClose(CivetServer* server,
             mDisplayManager->mConnections.erase(it);
             break;
         }
-    }
-}
-
-void HtmlDisplayManager::startRendering(std::function<bool()> doFrame) {
-    // TODO: use websocket throughput to throttle rendering.
-    while (!doFrame()) {
-        // Delay rendering for roughly one monitor refresh interval
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
 }
 

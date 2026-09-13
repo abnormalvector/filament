@@ -112,10 +112,15 @@ FIndexBuffer::FIndexBuffer(FEngine& engine, const Builder& builder)
                 /* userCallback */ std::move(copiedCompletionCallback),
                 /* userParam1 */ this,
                 /* userParam2 */ builder->mAsyncCreationUserData,
-                /* onCountdownComplete */ [this]() {
+                /* onCountdownComplete */ [this](backend::AsyncCallStatus const status) {
+                    // Always leaves CREATING, even when canceled: FEngine::destroy waits on that
+                    // to free the object, so one that stays CREATING is deferred forever.
                     // `std::memory_order_relaxed` should be sufficient because no other variables
                     // need to be visible to other threads in a strict sequence.
-                    mCreationComplete.store(true, std::memory_order_relaxed);
+                    mCreationStatus.store(status == backend::AsyncCallStatus::CANCELED
+                                    ? CreationStatus::CANCELED
+                                    : CreationStatus::CREATED,
+                            std::memory_order_relaxed);
                 },
                 /* driver */ &engine.getDriver());
 
@@ -135,7 +140,7 @@ FIndexBuffer::FIndexBuffer(FEngine& engine, const Builder& builder)
         // In regular (non-asynchronous) mode, we know creation is complete as soon as all
         // creation-relevant API calls are recorded into the command stream, because subsequent API
         // calls will always be invoked after that (even including asynchronous version of APIs).
-        mCreationComplete.store(true, std::memory_order_relaxed);
+        mCreationStatus.store(CreationStatus::CREATED, std::memory_order_relaxed);
     }
 }
 
@@ -148,6 +153,10 @@ void FIndexBuffer::setBuffer(FEngine& engine, BufferDescriptor&& buffer, uint32_
 
     FILAMENT_CHECK_PRECONDITION((byteOffset & 0x3) == 0)
             << "byteOffset must be a multiple of 4";
+    FILAMENT_CHECK_PRECONDITION(buffer.buffer != nullptr)
+            << "buffer data cannot be null";
+    FILAMENT_CHECK_PRECONDITION(isCreationSuccessful())
+            << "IndexBuffer creation failed or is not complete";
 
     engine.getDriverApi().updateIndexBuffer(mHandle, std::move(buffer), byteOffset);
 }
@@ -158,6 +167,8 @@ backend::AsyncCallId FIndexBuffer::setBufferAsync(FEngine& engine, BufferDescrip
 
     FILAMENT_CHECK_PRECONDITION((byteOffset & 0x3) == 0)
             << "byteOffset must be a multiple of 4";
+    FILAMENT_CHECK_PRECONDITION(buffer.buffer != nullptr)
+            << "buffer data cannot be null";
 
     using IndexBufferCallbackAdapter = CallbackAdapter<IndexBuffer>;
     auto* const cbWrapper = IndexBufferCallbackAdapter::make(std::move(callback), this, user);

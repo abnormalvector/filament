@@ -9,6 +9,14 @@
     #define MATERIAL_CAN_SKIP_LIGHTING
 #endif
 
+#if !defined(SHADING_MODEL_CLOTH) && !defined(SHADING_MODEL_SUBSURFACE) && \
+    !defined(SHADING_MODEL_UNLIT) && !defined(SHADING_MODEL_SPECULAR_GLOSSINESS) && \
+    defined(MATERIAL_HAS_SECOND_ROUGHNESS) && CLIENT_MATERIAL_API_LEVEL >= 2
+
+    #define MATERIAL_HAS_SECOND_SPECULAR_LOBE
+
+#endif
+
 struct MaterialInputs {
     vec4  baseColor;
 #if !defined(SHADING_MODEL_UNLIT)
@@ -24,8 +32,24 @@ struct MaterialInputs {
     vec4  emissive;
 
 #if !defined(SHADING_MODEL_CLOTH) && !defined(SHADING_MODEL_SUBSURFACE) && !defined(SHADING_MODEL_UNLIT)
+#if !defined(SHADING_MODEL_SPECULAR_GLOSSINESS)
+#if CLIENT_MATERIAL_API_LEVEL >= 2
+    float secondRoughness;
+    float secondRoughnessWeight;
+#else
+    #define secondRoughness ERROR_secondRoughness_api_level_2_END
+    #define secondRoughnessWeight ERROR_secondRoughnessWeight_api_level_2_END
+#endif
+#endif
+
     vec3 sheenColor;
     float sheenRoughness;
+#endif
+
+#if !defined(SHADING_MODEL_CLOTH) && !defined(SHADING_MODEL_UNLIT)
+    float iridescence;
+    float iridescenceIor;
+    float iridescenceThickness;
 #endif
 
     float clearCoat;
@@ -125,11 +149,22 @@ void initMaterial(out MaterialInputs material) {
 #endif
     material.emissive = vec4(vec3(0.0), 1.0);
 
+#if defined(MATERIAL_HAS_SECOND_SPECULAR_LOBE)
+    material.secondRoughness = 0.0f;
+    material.secondRoughnessWeight = 0.0;
+#endif
+
 #if !defined(SHADING_MODEL_CLOTH) && !defined(SHADING_MODEL_SUBSURFACE) && !defined(SHADING_MODEL_UNLIT)
 #if defined(MATERIAL_HAS_SHEEN_COLOR)
     material.sheenColor = vec3(0.0);
     material.sheenRoughness = 0.0;
 #endif
+#endif
+
+#if defined(MATERIAL_HAS_IRIDESCENCE) && !defined(SHADING_MODEL_CLOTH) && !defined(SHADING_MODEL_UNLIT)
+    material.iridescence = 0.0;
+    material.iridescenceIor = 1.3;
+    material.iridescenceThickness = 400.0;
 #endif
 
 #if defined(MATERIAL_HAS_CLEAR_COAT)

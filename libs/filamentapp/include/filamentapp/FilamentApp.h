@@ -64,11 +64,6 @@ public:
 
     void close();
 
-    void onSurfaceCreated(void* nativeWindow);
-    void onSurfaceChanged(int width, int height);
-    void onSurfaceDestroyed();
-    void onTouchEvent(int action, float x, float y);
-
     void setSidebarWidth(int width);
     void setWindowTitle(const char* title);
     void setCameraFocalLength(float focalLength);
@@ -91,8 +86,6 @@ public:
     FilamentApp(FilamentApp&& rhs) = delete;
     FilamentApp& operator=(const FilamentApp& rhs) = delete;
     FilamentApp& operator=(FilamentApp&& rhs) = delete;
-
-    static const utils::Path& getRootAssetsPath();
 
 private:
     FilamentApp();

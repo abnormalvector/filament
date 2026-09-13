@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/resources.h"
 
@@ -40,6 +39,8 @@
 
 #include <utils/EntityManager.h>
 
+#include <samples/SampleConfig.h>
+
 #include <cmath>
 
 using namespace filament;
@@ -51,6 +52,8 @@ using utils::EntityManager;
 using MinFilter = TextureSampler::MinFilter;
 using MagFilter = TextureSampler::MagFilter;
 using AttributeType = VertexBuffer::AttributeType;
+
+namespace {
 
 struct App {
     FilamentApp2* filamentApp;
@@ -180,6 +183,7 @@ void cleanup(std::shared_ptr<App> app, Engine* engine) {
     engine->destroy(app->renderable);
     engine->destroy(app->matInstance);
     engine->destroy(app->mat);
+    engine->destroy(app->tex);
     engine->destroy(app->vb);
     engine->destroy(app->ib);
 
@@ -198,16 +202,15 @@ void animate(std::shared_ptr<App> app, Engine* engine, View* view, double now) {
     tcm.setTransform(tcm.getInstance(app->renderable), mat4f::rotation(now, float3{ 0, 0, 1 }));
 }
 
+} // namespace
+
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
     auto app = std::make_shared<App>();
     app->config = config;
 
     auto fApp =
-            FilamentApp2::Builder()
-                    .title(config.title)
-                    .backend(config.backend)
-                    .displayManager(dm)
+            samples::getBuilder(config, dm, loader)
                     .setup([app](Engine* engine, View* view, Scene* scene) {
                         setup(app, engine, view, scene);
                     })
@@ -218,14 +221,17 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() { return {}; }
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
     SampleConfig config;
     config.title = "point_sprites";
-    int optind = samples::handleCommandLineArguments(argc, argv, &config);
+    samples::handleCommandLineArguments(argc, argv, &config,
+            { .parameters = createAppParameters() });
     auto dm = samples::getDisplayManager(config);
-
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto loader = samples::getAssetLoader(config);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
 
     return 0;

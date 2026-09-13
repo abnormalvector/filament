@@ -17,6 +17,8 @@
 #ifndef TNT_FILAMENT_DRIVER_DRIVERBASE_H
 #define TNT_FILAMENT_DRIVER_DRIVERBASE_H
 
+#include "JobQueue.h"
+
 #include <private/backend/Dispatcher.h>
 #include <private/backend/Driver.h>
 
@@ -221,6 +223,96 @@ public:
     }
 
     void scheduleCallback(CallbackHandler* handler, void* user, CallbackHandler::Callback callback) final;
+
+    /**
+     * Schedules the completion callback of an asynchronous operation, telling it whether the
+     * operation ran or was canceled. Can be called from any thread.
+     *
+     * The status has to be bound to the call site, so this goes through the functor overload above
+     * rather than dispatching the callback directly.
+     */
+    void scheduleAsyncCallback(CallbackHandler* handler, AsyncCallback callback, void* user,
+            AsyncCallStatus const status) {
+        if (callback) {
+            scheduleCallback(handler, [callback, user, status]() {
+                callback(user, status);
+            });
+        }
+    }
+
+    /**
+     * Holds the completion callback of an asynchronous call, and guarantees that it is scheduled
+     * exactly once: either by the job itself once it has run, with `AsyncCallStatus::COMPLETED`, or
+     * by this object's destructor with `AsyncCallStatus::CANCELED` if the job is destroyed without
+     * ever running. The latter happens when the call is canceled (see `cancelAsyncJob`) or dropped
+     * because the queue is stopping.
+     *
+     * Asynchronous jobs must capture this rather than the raw handler/callback/user triplet:
+     * a caller that never gets its completion callback cannot tell a canceled call apart from one
+     * that is still pending, and whatever the callback owns is leaked.
+     */
+    class AsyncCompletion {
+    public:
+        AsyncCompletion(DriverBase* driver, CallbackHandler* handler, AsyncCallback callback,
+                void* user) noexcept
+                : mDriver(driver), mHandler(handler), mCallback(callback), mUser(user) {}
+
+        AsyncCompletion(AsyncCompletion&& rhs) noexcept
+                : mDriver(rhs.mDriver), mHandler(rhs.mHandler), mCallback(rhs.mCallback),
+                  mUser(rhs.mUser) {
+            rhs.mCallback = nullptr;
+        }
+
+        AsyncCompletion(AsyncCompletion const&) = delete;
+        AsyncCompletion& operator=(AsyncCompletion const&) = delete;
+        AsyncCompletion& operator=(AsyncCompletion&&) = delete;
+
+        // Reaching the destructor with the callback still pending means the job never ran.
+        ~AsyncCompletion() {
+            schedule(AsyncCallStatus::CANCELED);
+        }
+
+        /**
+         * Schedules the completion callback with the given status, unless it has already been
+         * scheduled. Safe to invoke from whichever thread owns this completion (e.g., worker thread
+         * on completion or calling thread on cancellation), as `scheduleAsyncCallback` is
+         * thread-safe.
+         */
+        void schedule(AsyncCallStatus const status) {
+            if (auto cb = std::exchange(mCallback, nullptr)) {
+                mDriver->scheduleAsyncCallback(mHandler, cb, mUser, status);
+            }
+        }
+
+    private:
+        DriverBase* mDriver;
+        CallbackHandler* mHandler;
+        AsyncCallback mCallback;
+        void* mUser;
+    };
+
+    /**
+     * Runs an asynchronous call that is all CPU work here, on the backend thread, rather than on a
+     * job, and reports its completion through the queue.
+     *
+     * Note that the `cancel` call at the beginning claims the id that the `...AsyncS()` half
+     * reserved. This fails if the user thread already canceled it, in which case it early returns
+     * and `fn` doesn't run. And if the `cancel` call succeeds, regular cancellation afterwards
+     * has no effect thus it ensures `fn` to run. The completion is pushed as a job of its own, so
+     * that it is still reported in the order the asynchronous calls were issued.
+     */
+    template<typename Fn>
+    void runAsyncCallNow(JobQueue* jobQueue, AsyncCallId const jobId, CallbackHandler* handler,
+            AsyncCallback const callback, void* user, Fn&& fn) {
+        AsyncCompletion completion(this, handler, callback, user);
+        if (!jobQueue->cancel(jobId)) {
+            return;
+        }
+        fn();
+        jobQueue->push([completion = std::move(completion)]() mutable {
+            completion.schedule(AsyncCallStatus::COMPLETED);
+        });
+    }
 
     /**
      * Waits for a predicate to become true or until a timeout is reached.

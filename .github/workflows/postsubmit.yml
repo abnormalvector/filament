@@ -7,6 +7,9 @@ on:
       - release
       - rc/**
 
+permissions:
+  contents: read
+
 jobs:
   build-android:
     name: build-android
@@ -14,9 +17,10 @@ jobs:
     # (standard linux runner will fail on disk space and faster build time).
     runs-on: 'ubuntu-24.04-4core'
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/linux-prereq
       - name: Run Android Continuous
         uses: ./.github/actions/android-continuous
@@ -25,18 +29,19 @@ jobs:
 
   build-ios:
     name: build-ios
-    runs-on: 'macos-14'
+    runs-on: 'macos-15'
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/mac-prereq
-      - name: Select Xcode 16.2
-        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Select Xcode 16.4
+        run: sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
       - name: Run build script
         run: |
           cd build/ios && printf "y" | ./build.sh continuous
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: filament-ios
           path: out/filament-release-ios.tgz
@@ -48,30 +53,32 @@ jobs:
     name: build-linux
     runs-on: 'arm-ubuntu-24.04-16core'
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/linux-prereq
       - name: Run build script
         run: |
           cd build/linux && printf "y" | ./build.sh continuous
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: filament-arm-linux
           path: out/filament-release-arm-linux.tgz
 
   build-mac:
     name: build-mac
-    runs-on: 'macos-14'
+    runs-on: 'macos-15'
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/mac-prereq
       - name: Run build script
         run: |
           cd build/mac && printf "y" | ./build.sh continuous
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: filament-mac
           path: out/filament-release-darwin.tgz
@@ -80,15 +87,16 @@ jobs:
     name: build-web
     runs-on: 'arm-ubuntu-24.04-16core'
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: ./.github/actions/linux-prereq
       - uses: ./.github/actions/web-prereq
       - name: Run build script
         run: |
           cd build/web && printf "y" | ./build.sh continuous
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: filament-web
           path: out/filament-release-web.tgz
@@ -98,12 +106,14 @@ jobs:
     runs-on: 'windows-2022'
 
     steps:
-      - uses: actions/checkout@v4.1.6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Run build script
         run: |
           build\windows\build-github.bat continuous
         shell: cmd
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: filament-windows
           path: out/filament-windows.tgz

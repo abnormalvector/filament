@@ -15,9 +15,9 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include <filamentapp/AssetLoader.h>
+#include <filamentapp/DesktopAssetLoader.h>
 #include <filamentapp/FilamentApp2.h>
 #include <filamentapp/MeshAssimp.h>
 
@@ -42,18 +42,22 @@
 #include <math/mat4.h>
 #include <math/vec3.h>
 
+#include <samples/SampleConfig.h>
 #include <stb_image.h>
 
 #include <iostream>
 #include <map>
 #include <memory>
-#include <string>
 #include <vector>
 
 using namespace filament::math;
 using namespace filament;
 using namespace filamat;
 using namespace utils;
+
+namespace {
+
+float g_meshScale = 1.0f;
 
 constexpr int MAP_COUNT       = 7;
 constexpr int MAP_COLOR       = 0;
@@ -70,6 +74,8 @@ struct PbrMap {
     bool sRGB;
     Texture* texture;
 };
+
+static const char* MODEL_FILE = "assets/models/monkey/monkey.obj";
 
 struct App {
     std::vector<Path> filenames;
@@ -88,46 +94,45 @@ struct App {
     };
     SampleConfig config;
     struct PbrConfig {
-        std::string materialDir;
+        utils::CString materialDir;
         bool clearCoat = false;
         bool anisotropy = false;
     } pbrConfig;
     FilamentApp2* filamentApp = nullptr;
 };
 
+} // namespace
+
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
     auto app = std::make_shared<App>();
     app->config = config;
 
-    if (config.customArgs.find("materialDir") != config.customArgs.end()) {
-        app->pbrConfig.materialDir = config.customArgs.at("materialDir").c_str();
+    utils::CString matDir = config.getString("material-dir");
+    if (!matDir.empty()) {
+        app->pbrConfig.materialDir = matDir;
+    } else {
+        app->pbrConfig.materialDir = "assets/models/monkey";
     }
-    if (config.customArgs.find("clearCoat") != config.customArgs.end()) {
+    if (config.getBool("clear-coat")) {
         app->pbrConfig.clearCoat = true;
     }
-    if (config.customArgs.find("anisotropy") != config.customArgs.end()) {
+    if (config.getBool("anisotropy")) {
         app->pbrConfig.anisotropy = true;
     }
-    if (config.customArgs.find("filenames") != config.customArgs.end()) {
-        std::string_view filenamesStr = config.customArgs.at("filenames").c_str();
-        size_t pos = 0;
-        while ((pos = std::string_view(filenamesStr).find('|')) != std::string_view::npos) {
-            app->filenames.push_back(utils::Path(filenamesStr.substr(0, pos)));
-            filenamesStr.remove_prefix(pos + 1);
-        }
-        if (!filenamesStr.empty()) {
-            app->filenames.push_back(utils::Path(filenamesStr));
-        }
+    g_meshScale = config.getFloat("scale", 1.0f);
+    for (const auto& filename: config.positionalArgs) {
+        app->filenames.push_back(utils::Path(filename.c_str()));
     }
 
-    auto loadTexture = [](Engine* engine, const std::string& filePath, Texture** map,
+    auto loadTexture = [loader](Engine* engine, const utils::Path& path, Texture** map,
                                bool sRGB = true) -> bool {
-        if (!filePath.empty()) {
-            Path const path(filePath);
-            if (path.exists()) {
-                int w, h, n;
-                unsigned char* data = stbi_load(path.getAbsolutePath().c_str(), &w, &h, &n, 3);
+        if (!path.isEmpty()) {
+            auto buf = loader->load(path);
+            if (!buf.empty()) {
+                int w = 0, h = 0, n = 0;
+                unsigned char* data =
+                        stbi_load_from_memory(buf.data(), (int) buf.size(), &w, &h, &n, 3);
                 if (data != nullptr) {
                     *map = Texture::Builder()
                                    .width(uint32_t(w))
@@ -152,9 +157,9 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         return false;
     };
 
-    auto setup = [app, loadTexture](Engine* engine, View* view, Scene* scene) {
-        Path const path(app->pbrConfig.materialDir);
-        std::string const name(path.getName());
+    auto setup = [app, loadTexture, loader](Engine* engine, View* view, Scene* scene) {
+        Path const path(app->pbrConfig.materialDir.c_str());
+        utils::CString const name(path.getName().c_str());
 
         view->setAmbientOcclusionOptions({ .radius = 0.01f,
             .bilateralThreshold = 0.005f,
@@ -165,14 +170,16 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
 
         bool hasUV = false;
         for (auto& map: app->maps) {
-            if (!loadTexture(engine, path.concat(name + "_" + map.suffix + ".png"), &map.texture,
-                        map.sRGB)) {
-                if (!loadTexture(engine, path.concat(std::string(map.suffix) + ".png"),
+            if (!loadTexture(engine, path.concat((name + "_" + map.suffix + ".png").c_str()),
+                        &map.texture, map.sRGB)) {
+                if (!loadTexture(engine, path.concat((utils::CString(map.suffix) + ".png").c_str()),
                             &map.texture, map.sRGB)) {
                     std::cout << "The texture " << map.suffix << " does not exist" << std::endl;
                 }
             }
-            if (map.texture != nullptr) hasUV = true;
+            if (map.texture != nullptr) {
+                hasUV = true;
+            }
         }
 
         bool const hasBaseColorMap = app->maps[MAP_COLOR].texture != nullptr;
@@ -183,7 +190,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         bool const hasBentNormalMap = app->maps[MAP_BENT_NORMAL].texture != nullptr;
         bool const hasHeightMap = app->maps[MAP_HEIGHT].texture != nullptr;
 
-        std::string shader = R"SHADER(
+        utils::CString shader = R"SHADER(
             void material(inout MaterialInputs material) {
         )SHADER";
 
@@ -301,6 +308,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         MaterialBuilder builder;
         builder.name("DefaultMaterial")
                 .targetApi(MaterialBuilder::TargetApi::ALL)
+                .platform(MaterialBuilder::Platform::ALL)
 #ifndef NDEBUG
                 .optimization(MaterialBuilderBase::Optimization::NONE)
                 .generateDebugInfo(true)
@@ -323,22 +331,27 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         Package const pkg = builder.build(engine->getJobSystem());
 
         app->material = Material::Builder().package(pkg.getData(), pkg.getSize()).build(*engine);
-        app->materialInstances["DefaultMaterial"] = app->material->createInstance();
+        if (app->material) {
+            app->materialInstances["DefaultMaterial"] = app->material->createInstance();
 
-        TextureSampler sampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
-                TextureSampler::MagFilter::LINEAR, TextureSampler::WrapMode::REPEAT);
-        sampler.setAnisotropy(8.0f);
+            TextureSampler sampler(TextureSampler::MinFilter::LINEAR_MIPMAP_LINEAR,
+                    TextureSampler::MagFilter::LINEAR, TextureSampler::WrapMode::REPEAT);
+            sampler.setAnisotropy(8.0f);
 
-        for (auto& map: app->maps) {
-            if (map.texture != nullptr) {
-                app->materialInstances["DefaultMaterial"]->setParameter(map.parameterName,
-                        map.texture, sampler);
+            for (auto& map: app->maps) {
+                if (map.texture != nullptr) {
+                    app->materialInstances["DefaultMaterial"]->setParameter(map.parameterName,
+                            map.texture, sampler);
+                }
             }
         }
 
-        app->meshSet = std::make_unique<MeshAssimp>(*engine);
+        app->meshSet = std::make_unique<MeshAssimp>(*engine, loader);
         for (auto& filename: app->filenames) {
             app->meshSet->addFromFile(filename, app->materialInstances, true);
+        }
+        if (app->meshSet->getRenderables().empty()) {
+            app->meshSet->addFromFile(MODEL_FILE, app->materialInstances, true);
         }
 
         auto& rcm = engine->getRenderableManager();
@@ -346,7 +359,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         for (auto renderable: app->meshSet->getRenderables()) {
             if (rcm.hasComponent(renderable)) {
                 auto ti = tcm.getInstance(renderable);
-                tcm.setTransform(ti, mat4f{ mat3f(app->config.scale), float3(0.0f, 0.0f, -4.0f) } *
+                tcm.setTransform(ti, mat4f{ mat3f(g_meshScale), float3(0.0f, 0.0f, -4.0f) } *
                                              tcm.getWorldTransform(ti));
                 rcm.setReceiveShadows(rcm.getInstance(renderable), true);
                 rcm.setCastShadows(rcm.getInstance(renderable), true);
@@ -365,18 +378,29 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     };
 
     auto cleanup = [app](Engine* engine, View*, Scene*) {
+        app->meshSet.reset();
         for (auto& item: app->materialInstances) {
             auto materialInstance = item.second;
-            engine->destroy(materialInstance);
+            if (materialInstance) {
+                engine->destroy(materialInstance);
+            }
         }
-        app->meshSet.reset(nullptr);
-        engine->destroy(app->material);
-        for (const auto& map: app->maps) {
-            engine->destroy(map.texture);
+        app->materialInstances.clear();
+        if (app->material) {
+            engine->destroy(app->material);
+            app->material = nullptr;
         }
-        EntityManager& em = EntityManager::get();
-        engine->destroy(app->light);
-        em.destroy(app->light);
+        for (auto& map: app->maps) {
+            if (map.texture) {
+                engine->destroy(map.texture);
+                map.texture = nullptr;
+            }
+        }
+        if (app->light) {
+            engine->destroy(app->light);
+            EntityManager::get().destroy(app->light);
+            app->light = Entity{};
+        }
     };
 
     auto preRender = [app](filament::Engine*, filament::View*, filament::Scene*,
@@ -386,11 +410,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                 { .clearColor = { 0.5f, 0.5f, 0.5f, 1.0f }, .clear = !app->filamentApp->getIBL() });
     };
 
-    auto fApp = FilamentApp2::Builder()
-                        .title(app->config.title)
-                        .backend(app->config.backend)
-                        .displayManager(dm)
-                        .scale(app->config.scale)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .preRender(preRender)
@@ -399,62 +419,40 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() {
+    return {
+        samples::Parameter::makeString("material-dir", 'm', "Directory containing custom materials",
+                ""),
+        samples::Parameter::makeBool("clear-coat", 'C', "Enable clear coat", false),
+        samples::Parameter::makeBool("anisotropy", 'A', "Enable anisotropy", false),
+        samples::Parameter::makeFloat("scale", 's', "Applies uniform scale", 1.0f),
+    };
+}
+
 #ifndef __ANDROID__
 int main(int argc, char* argv[]) {
     SampleConfig config;
-    static constexpr const char* CUSTOM_OPTSTR = "m:cA";
-    static const utils::getopt::option CUSTOM_OPTIONS[] = {
-        { "material-dir", utils::getopt::required_argument, nullptr, 'm' },
-        { "clear-coat", utils::getopt::no_argument, nullptr, 'c' },
-        { "anisotropy", utils::getopt::no_argument, nullptr, 'A' }, { nullptr, 0, nullptr, 0 }
-    };
-    auto customHandler = [&config](int opt, const utils::CString& arg) -> bool {
-        switch (opt) {
-            case 'm':
-                config.customArgs["materialDir"] = arg;
-                return true;
-            case 'c':
-                config.customArgs["clearCoat"] = utils::CString("true");
-                return true;
-            case 'A':
-                config.customArgs["anisotropy"] = utils::CString("true");
-                return true;
-        }
-        return false;
-    };
     samples::CommandLineSpecification spec = {
         .sampleDescription = "SAMPLE_FULL_PBR demonstrates physically based rendering in Filament.",
-        .positionalArgsDescription = "<mesh files (.obj, .fbx)>",
-        .requiredPositionalArgCount = 1,
-        .customOptionsHelp = "   --material-dir=<path>, -m <path>\n"
-                             "       Directory containing custom materials\n\n"
-                             "   --clear-coat, -c\n"
-                             "       Enable clear coat\n\n"
-                             "   --anisotropy, -A\n"
-                             "       Enable anisotropy\n",
-        .customHandler = customHandler,
-        .customOptStr = CUSTOM_OPTSTR,
-        .customOptions = CUSTOM_OPTIONS,
+        .positionalArgsDescription = { "[mesh files (.obj, .fbx)]" },
+        .requiredPositionalArgCount = 0,
+        .parameters = createAppParameters(),
     };
 
-    int optind = samples::handleCommandLineArguments(argc, argv, &config, spec);
+    samples::handleCommandLineArguments(argc, argv, &config, spec);
     auto dm = samples::getDisplayManager(config);
+    auto loader = samples::getAssetLoader(config);
 
-    utils::CString filenames;
-    for (int i = optind; i < argc; i++) {
-        utils::Path const filename = argv[i];
-        if (!filename.exists()) {
-            std::cerr << "file " << argv[i] << " not found!" << std::endl;
+    for (const auto& fname : config.positionalArgs) {
+        utils::Path const filename(fname.c_str_safe());
+        if (!loader->exists(filename)) {
+            std::cerr << "file " << filename << " not found!" << std::endl;
             return 1;
         }
-        if (i > optind) filenames += "|";
-        filenames += argv[i];
     }
-    config.customArgs["filenames"] = utils::CString(filenames.c_str());
 
     config.title = "PBR";
-
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
 
     return 0;

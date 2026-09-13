@@ -290,6 +290,9 @@ utils::io::sstream& CodeGenerator::generateCommonProlog(utils::io::sstream& out,
         // constants for UBO sizes, we must hardcode WebGPU minspec in both places.
         // With a WebGPU UBO minspec of 64 KiB (65536 bytes), height is set to 65536 / 16 = 4096.
         out << "const int CONFIG_FROXEL_RECORD_BUFFER_HEIGHT = 4096;\n";
+        // Unlike the layout constants above, other specialization constants generated below
+        // remain WGSL overrides whose defaults are specialized by WebGPUProgram before it creates
+        // the shader module.
     } else {
         generateSpecializationConstant(out, "CONFIG_MAX_INSTANCES",
                 +ReservedSpecializationConstants::CONFIG_MAX_INSTANCES, (int)CONFIG_MAX_INSTANCES);
@@ -333,6 +336,9 @@ utils::io::sstream& CodeGenerator::generateCommonProlog(utils::io::sstream& out,
     // example), we'd run into a GPU crash.
     out << "#define CONFIG_MAX_STEREOSCOPIC_EYES " << (int) CONFIG_MAX_STEREOSCOPIC_EYES << "\n";
 
+    out << "#define CONFIG_MAX_EXTRA_DIRECTIONAL_LIGHTS "
+        << (int) CONFIG_MAX_EXTRA_DIRECTIONAL_LIGHTS << "\n";
+
     if (mFeatureLevel == FeatureLevel::FEATURE_LEVEL_0) {
         // On ES2 since we don't have post-processing, we need to emulate EGL_GL_COLORSPACE_KHR,
         // when it's not supported.
@@ -343,11 +349,21 @@ utils::io::sstream& CodeGenerator::generateCommonProlog(utils::io::sstream& out,
     bool const isDepthVariant = filament::Variant::isValidDepthVariant(v);
     if (isDepthVariant) {
         out << "const bool RUNTIME_CONFIG_HAS_DYNAMIC_LIGHTING = false;\n";
+        out << "const bool RUNTIME_CONFIG_HAS_EXTRA_DIRECTIONAL_LIGHTS = false;\n";
+        out << "const bool RUNTIME_CONFIG_HAS_DIRECTIONAL_LIGHTING = false;\n";
     } else {
         bool const litVariants = material.isLit || material.hasShadowMultiplier;
         generateSpecializationConstant(out, "RUNTIME_CONFIG_HAS_DYNAMIC_LIGHTING",
                 CONFIG_MAX_RESERVED_SPEC_CONSTANTS +
                         +DynamicSpecializationConstants::RUNTIME_CONFIG_HAS_DYNAMIC_LIGHTING,
+                litVariants);
+        generateSpecializationConstant(out, "RUNTIME_CONFIG_HAS_EXTRA_DIRECTIONAL_LIGHTS",
+                CONFIG_MAX_RESERVED_SPEC_CONSTANTS + +DynamicSpecializationConstants::
+                        RUNTIME_CONFIG_HAS_EXTRA_DIRECTIONAL_LIGHTS,
+                false);
+        generateSpecializationConstant(out, "RUNTIME_CONFIG_HAS_DIRECTIONAL_LIGHTING",
+                CONFIG_MAX_RESERVED_SPEC_CONSTANTS + +DynamicSpecializationConstants::
+                        RUNTIME_CONFIG_HAS_DIRECTIONAL_LIGHTING,
                 litVariants);
     }
 
@@ -1130,11 +1146,7 @@ io::sstream& CodeGenerator::generateSurfaceLit(io::sstream& out, ShaderStage sta
 
         out << SHADERS_SURFACE_AMBIENT_OCCLUSION_FS_DATA;
         out << SHADERS_SURFACE_LIGHT_INDIRECT_FS_DATA;
-
-        if (variant.hasDirectionalLighting()) {
-            out << SHADERS_SURFACE_LIGHT_DIRECTIONAL_FS_DATA;
-        }
-
+        out << SHADERS_SURFACE_LIGHT_DIRECTIONAL_FS_DATA;
         out << SHADERS_SURFACE_LIGHT_PUNCTUAL_FS_DATA;
         out << SHADERS_SURFACE_SHADING_LIT_FS_DATA;
     }
@@ -1200,6 +1212,11 @@ char const* CodeGenerator::getConstantName(MaterialBuilder::Property property) n
         case Property::SPECULAR_COLOR_FACTOR:       return "SPECULAR_COLOR_FACTOR";
         case Property::SHADOW_STRENGTH:             return "SHADOW_STRENGTH";
         case Property::CLIP_SPACE_POSITION:         return "CLIP_SPACE_POSITION";
+        case Property::SECOND_ROUGHNESS:            return "SECOND_ROUGHNESS";
+        case Property::SECOND_ROUGHNESS_WEIGHT:     return "SECOND_ROUGHNESS_WEIGHT";
+        case Property::IRIDESCENCE:                 return "IRIDESCENCE";
+        case Property::IRIDESCENCE_IOR:             return "IRIDESCENCE_IOR";
+        case Property::IRIDESCENCE_THICKNESS:       return "IRIDESCENCE_THICKNESS";
     }
 }
 

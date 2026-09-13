@@ -47,7 +47,6 @@ public:
 
     // This method is meant to be used with external samplers
     VkDescriptorSetLayout getVkLayout(VulkanDescriptorSetLayout::Bitmask const& bitmasks,
-            fvkutils::SamplerBitmask externalSamplers,
             utils::FixedCapacityVector<std::pair<uint64_t, VkSampler>> immutableSamplers = {});
 
 private:
@@ -59,8 +58,9 @@ private:
         VulkanDescriptorSetLayout::Bitmask bitmask = {};
         // number of immutable samplers can be arbitrary; so we hash them into 64-bit.
         uint64_t immutableSamplerHash = 0;
+        uint64_t padding = 0;
     };
-    static_assert(sizeof(LayoutKey) == 48);
+    static_assert(sizeof(LayoutKey) == 96);
 
     using LayoutKeyHashFn = utils::hash::MurmurHashFn<LayoutKey>;
     struct LayoutKeyEqual {

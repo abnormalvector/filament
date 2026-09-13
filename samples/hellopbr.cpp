@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/monkey.h"
 #include "generated/resources/resources.h"
@@ -36,8 +35,9 @@
 #include <utils/EntityManager.h>
 #include <utils/getopt.h>
 
+#include <samples/SampleConfig.h>
+
 #include <iostream>
-#include <string>// for printing usage/help
 
 using namespace filament;
 using namespace filamesh;
@@ -45,6 +45,7 @@ using namespace filament::math;
 
 using Backend = Engine::Backend;
 
+namespace {
 struct App {
     FilamentApp2* filamentApp;
     SampleConfig config;
@@ -56,9 +57,13 @@ struct App {
 };
 
 static const char* IBL_FOLDER = "assets/ibl/lightroom_14b";
+} // namespace
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
+    if (config.iblDirectory.empty()) {
+        config.iblDirectory = utils::CString(IBL_FOLDER);
+    }
     auto app = std::make_shared<App>();
     app->config = config;
 
@@ -100,15 +105,13 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     auto cleanup = [app](Engine* engine, View*, Scene*) {
         engine->destroy(app->light);
         engine->destroy(app->mesh.renderable);
+        engine->destroy(app->mesh.vertexBuffer);
+        engine->destroy(app->mesh.indexBuffer);
         engine->destroy(app->materialInstance);
         engine->destroy(app->material);
     };
 
-    auto fApp = FilamentApp2::Builder()
-                        .displayManager(dm)
-                        .title(app->config.title)
-                        .iblDirectory(app->config.iblDirectory)
-                        .backend(app->config.backend)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .animation([app](Engine* engine, View* view, double now) {
@@ -123,15 +126,19 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() { return {}; }
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
     SampleConfig config;
     config.title = "hellopbr";
-    config.iblDirectory = utils::CString((FilamentApp2::getRootAssetsPath() + IBL_FOLDER).c_str());
-    int optind = samples::handleCommandLineArguments(argc, argv, &config);
+    config.iblDirectory = utils::CString(IBL_FOLDER);
+    samples::handleCommandLineArguments(argc, argv, &config,
+            { .parameters = createAppParameters() });
     auto dm = samples::getDisplayManager(config);
+    auto loader = samples::getAssetLoader(config);
 
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
 
     return 0;

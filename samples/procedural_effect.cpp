@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/resources.h"
 
@@ -38,10 +37,10 @@
 #include <utils/getopt.h>
 #include <utils/Path.h>
 
+#include <samples/SampleConfig.h>
 #include <stb_image.h>
 
 #include <iostream>
-#include <string>
 
 using namespace filament;
 using utils::Entity;
@@ -50,6 +49,7 @@ using utils::Path;
 using MinFilter = TextureSampler::MinFilter;
 using MagFilter = TextureSampler::MagFilter;
 
+namespace {
 struct App {
     FilamentApp2* filamentApp = nullptr;
     SampleConfig config;
@@ -60,8 +60,9 @@ struct App {
     Entity renderable;
     Entity camera;
     Camera* cam = nullptr;
-    double startTime = 0.0;
+    double startTime = -1.0;
 };
+} // namespace
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
@@ -110,10 +111,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     };
 
 
-    auto fApp = FilamentApp2::Builder()
-                        .displayManager(dm)
-                        .title(config.title)
-                        .backend(config.backend)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .animation([app](Engine*, View* view, double now) {
@@ -123,7 +121,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                             app->cam->setProjection(Camera::Projection::ORTHO, -aspect, aspect,
                                     -1.0f, 1.0f, 0.0f, 1.0f);
 
-                            if (app->startTime == 0.0) {
+                            if (app->startTime < 0.0) {
                                 app->startTime = now;
                             }
 
@@ -135,14 +133,17 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() { return {}; }
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
     SampleConfig config;
     config.title = "procedural_effect";
-    int optind = samples::handleCommandLineArguments(argc, argv, &config);
+    samples::handleCommandLineArguments(argc, argv, &config,
+            { .parameters = createAppParameters() });
     auto dm = samples::getDisplayManager(config);
-
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto loader = samples::getAssetLoader(config);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
     return 0;
 }

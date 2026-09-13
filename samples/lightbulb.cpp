@@ -15,12 +15,12 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/resources.h"
 
 #include <filamentapp/AssetLoader.h>
 #include <filamentapp/Cube.h>
+#include <filamentapp/DesktopAssetLoader.h>
 #include <filamentapp/FilamentApp2.h>
 #include <filamentapp/IcoSphere.h>
 #include <filamentapp/MeshAssimp.h>
@@ -44,15 +44,25 @@
 
 #include <math/norm.h>
 
+#include <samples/SampleConfig.h>
+
 #include <iostream>
 #include <map>
-#include <string>
 #include <vector>
 
 using namespace filament::math;
 using namespace filament;
 using namespace filamat;
 using namespace utils;
+namespace {
+float g_meshScale = 1.0f;
+
+struct GroundPlane {
+    VertexBuffer* vb = nullptr;
+    IndexBuffer* ib = nullptr;
+    Material* mat = nullptr;
+    Entity renderable;
+};
 
 struct App {
     FilamentApp2* filamentApp;
@@ -63,6 +73,7 @@ struct App {
     std::unique_ptr<Cube> meshAabb;
     std::vector<Sphere> spheres;
     std::vector<Entity> lights;
+    GroundPlane plane;
     Entity discoBallEntity;
     float discoAngle = 0;
     float discoAngularSpeed = 0.25f * float(M_PI);
@@ -71,24 +82,26 @@ struct App {
     bool discoBall = false;
 };
 
+static const char* MODEL_FILE = "assets/models/monkey/monkey.obj";
+static const char* IBL_FOLDER = "assets/ibl/lightroom_14b";
+} // namespace
+
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
+    if (config.iblDirectory.empty()) {
+        config.iblDirectory = utils::CString(IBL_FOLDER);
+    }
     auto app = std::make_shared<App>();
     app->config = config;
 
-    app->moreLights = app->config.customArgs["moreLights"] == "true";
-    app->shadowPlane = app->config.customArgs["shadowPlane"] == "true";
-    app->discoBall = app->config.customArgs["discoBall"] == "true";
+    app->moreLights = app->config.getBool("more-lights");
+    app->shadowPlane = app->config.getBool("shadow-plane");
+    app->discoBall = app->config.getBool("disco");
+    g_meshScale = app->config.getFloat("scale", 1.0f);
 
-    std::string_view filenames_str = app->config.customArgs["filenames"].c_str();
-    size_t pos = 0;
-    while ((pos = std::string_view(filenames_str).find(';')) != std::string_view::npos) {
-        app->filenames.push_back(utils::Path(filenames_str.substr(0, pos)));
-        filenames_str.remove_prefix(pos + 1);
-    }
-    if (!filenames_str.empty()) {
-        app->filenames.push_back(utils::Path(filenames_str));
+    for (const auto& filename: app->config.positionalArgs) {
+        app->filenames.push_back(utils::Path(filename.c_str()));
     }
 
     auto cleanup = [app](Engine* engine, View* view, Scene* scene) {
@@ -100,6 +113,20 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         app->meshAabb.reset(nullptr);
 
         auto& em = EntityManager::get();
+
+        if (app->plane.renderable) {
+            engine->destroy(app->plane.renderable);
+            em.destroy(app->plane.renderable);
+        }
+        if (app->plane.mat) {
+            engine->destroy(app->plane.mat);
+        }
+        if (app->plane.vb) {
+            engine->destroy(app->plane.vb);
+        }
+        if (app->plane.ib) {
+            engine->destroy(app->plane.ib);
+        }
 
         app->spheres.clear();
 
@@ -118,18 +145,23 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                 { .clearColor = { 0.0f, 0.0f, 0.0f, 1.0f }, .clear = !app->filamentApp->getIBL() });
     };
 
-    auto setup = [app](Engine* engine, View* view, Scene* scene) {
-        app->meshSet.reset(new MeshAssimp(*engine));
+    auto setup = [app, loader](Engine* engine, View* view, Scene* scene) {
+        app->meshSet.reset(new MeshAssimp(*engine, loader));
         for (auto& filename: app->filenames) {
             app->meshSet->addFromFile(filename, app->materialLibrary);
+        }
+        if (app->meshSet->getRenderables().empty()) {
+            app->meshSet->addFromFile(MODEL_FILE, app->materialLibrary);
         }
 
         auto& lcm = engine->getLightManager();
 
         auto& tcm = engine->getTransformManager();
-        auto ti = tcm.getInstance(app->meshSet->getRenderables()[0]);
-        tcm.setTransform(ti, mat4f{ mat3f(app->config.scale), float3(0.0f, 0.0f, -4.0f) } *
-                                     tcm.getWorldTransform(ti));
+        if (!app->meshSet->getRenderables().empty()) {
+            auto ti = tcm.getInstance(app->meshSet->getRenderables()[0]);
+            tcm.setTransform(ti, mat4f{ mat3f(g_meshScale), float3(0.0f, 0.0f, -4.0f) } *
+                                         tcm.getWorldTransform(ti));
+        }
 
         auto& rcm = engine->getRenderableManager();
         for (auto renderable: app->meshSet->getRenderables()) {
@@ -268,24 +300,28 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                     tcm.getInstance(discoBall));
         }
 
-        app->meshAabb.reset(
-                new Cube(*engine, app->filamentApp->getTransparentMaterial(), { 0, 0, 1 }));
+        if (!app->meshSet->getRenderables().empty()) {
+            app->meshAabb.reset(
+                    new Cube(*engine, app->filamentApp->getTransparentMaterial(), { 0, 0, 1 }));
 
-        Entity object = app->meshSet->getRenderables()[1];
+            Entity object = app->meshSet->getRenderables().size() > 1
+                                    ? app->meshSet->getRenderables()[1]
+                                    : app->meshSet->getRenderables()[0];
 
-        RenderableManager::Instance ri = rcm.getInstance(object);
-        if (ri) {
-            app->meshAabb->mapAabb(*engine, rcm.getAxisAlignedBoundingBox(ri));
-            scene->addEntity(app->meshAabb->getWireFrameRenderable());
-            scene->addEntity(app->meshAabb->getSolidRenderable());
+            RenderableManager::Instance ri = rcm.getInstance(object);
+            if (ri) {
+                app->meshAabb->mapAabb(*engine, rcm.getAxisAlignedBoundingBox(ri));
+                scene->addEntity(app->meshAabb->getWireFrameRenderable());
+                scene->addEntity(app->meshAabb->getSolidRenderable());
+            }
+
+            tcm.setParent(tcm.getInstance(app->meshAabb->getSolidRenderable()),
+                    tcm.getInstance(object));
+            tcm.setParent(tcm.getInstance(app->meshAabb->getWireFrameRenderable()),
+                    tcm.getInstance(object));
+            rcm.setLayerMask(rcm.getInstance(app->meshAabb->getSolidRenderable()), 0x3, 0x2);
+            rcm.setLayerMask(rcm.getInstance(app->meshAabb->getWireFrameRenderable()), 0x3, 0x2);
         }
-
-        tcm.setParent(tcm.getInstance(app->meshAabb->getSolidRenderable()),
-                tcm.getInstance(object));
-        tcm.setParent(tcm.getInstance(app->meshAabb->getWireFrameRenderable()),
-                tcm.getInstance(object));
-        rcm.setLayerMask(rcm.getInstance(app->meshAabb->getSolidRenderable()), 0x3, 0x2);
-        rcm.setLayerMask(rcm.getInstance(app->meshAabb->getWireFrameRenderable()), 0x3, 0x2);
 
         if (app->shadowPlane) {
             Material* shadowMaterial =
@@ -294,20 +330,20 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
                             .build(*engine);
             shadowMaterial->setDefaultParameter("strength", 0.7f);
 
-            const static uint32_t indices[] = { 0, 1, 2, 2, 3, 0 };
+            static constexpr uint32_t indices[] = { 0, 1, 2, 2, 3, 0 };
 
-            const static filament::math::float3 vertices[] = {
+            static constexpr filament::math::float3 vertices[] = {
                 { -10, 0, -10 },
                 { -10, 0, 10 },
                 { 10, 0, 10 },
                 { 10, 0, -10 },
             };
 
-            short4 tbn = filament::math::packSnorm16(mat3f::packTangentFrame(
+            short4 const tbn = filament::math::packSnorm16(mat3f::packTangentFrame(
                     filament::math::mat3f{ float3{ 1.0f, 0.0f, 0.0f }, float3{ 0.0f, 0.0f, 1.0f },
                         float3{ 0.0f, 1.0f, 0.0f } }).xyzw);
 
-            const static filament::math::short4 normals[]{ tbn, tbn, tbn, tbn };
+            static const filament::math::short4 normals[]{ tbn, tbn, tbn, tbn };
 
             VertexBuffer* vertexBuffer = VertexBuffer::Builder()
                                                  .vertexCount(4)
@@ -347,6 +383,13 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
 
             tcm.setTransform(tcm.getInstance(planeRenderable),
                     filament::math::mat4f::translation(float3{ 0, -1, -4 }));
+
+            app->plane = {
+                .vb = vertexBuffer,
+                .ib = indexBuffer,
+                .mat = shadowMaterial,
+                .renderable = planeRenderable,
+            };
         }
     };
 
@@ -373,10 +416,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         };
     }
 
-    auto fApp = FilamentApp2::Builder()
-                        .displayManager(dm)
-                        .title(app->config.title)
-                        .scale(app->config.scale)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .preRender(preRender)
@@ -387,62 +427,40 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() {
+    return {
+        samples::Parameter::makeBool("more-lights", 'm', "Enable more point lights", false),
+        samples::Parameter::makeBool("disco", 'd', "Enable rotating disco ball", false),
+        samples::Parameter::makeBool("shadow-plane", 'p', "Enable shadow-receiving ground plane",
+                false),
+        samples::Parameter::makeFloat("scale", 's', "Applies uniform scale", 1.0f),
+    };
+}
+
 #ifndef __ANDROID__
 int main(int argc, char* argv[]) {
     SampleConfig config;
-    static constexpr const char* CUSTOM_OPTSTR = "mdp";
-    static const utils::getopt::option CUSTOM_OPTIONS[] = {
-        { "more-lights", utils::getopt::no_argument, nullptr, 'm' },
-        { "disco", utils::getopt::no_argument, nullptr, 'd' },
-        { "shadow-plane", utils::getopt::no_argument, nullptr, 'p' }, { nullptr, 0, nullptr, 0 }
-    };
-    auto customHandler = [&config](int opt, const utils::CString& arg) -> bool {
-        switch (opt) {
-            case 'm':
-                config.customArgs["moreLights"] = utils::CString("true");
-                return true;
-            case 'd':
-                config.customArgs["discoBall"] = utils::CString("true");
-                return true;
-            case 'p':
-                config.customArgs["shadowPlane"] = utils::CString("true");
-                return true;
-        }
-        return false;
-    };
     samples::CommandLineSpecification spec = {
         .sampleDescription = "LIGHTBULB is a point light and shadow testing tool for Filament.",
-        .positionalArgsDescription = "<mesh files (.obj, .fbx)>",
-        .requiredPositionalArgCount = 1,
-        .customOptionsHelp = "   --more-lights, -m\n"
-                             "       Enable more point lights\n\n"
-                             "   --disco, -d\n"
-                             "       Enable rotating disco ball\n\n"
-                             "   --shadow-plane, -p\n"
-                             "       Enable shadow-receiving ground plane\n",
-        .customHandler = customHandler,
-        .customOptStr = CUSTOM_OPTSTR,
-        .customOptions = CUSTOM_OPTIONS,
+        .positionalArgsDescription = { "[mesh files (.obj, .fbx)]" },
+        .requiredPositionalArgCount = 0,
+        .parameters = createAppParameters(),
     };
 
-    int optind = samples::handleCommandLineArguments(argc, argv, &config, spec);
+    samples::handleCommandLineArguments(argc, argv, &config, spec);
     auto dm = samples::getDisplayManager(config);
+    auto loader = samples::getAssetLoader(config);
 
-    utils::CString filenames;
-    for (int i = optind; i < argc; i++) {
-        utils::Path filename = argv[i];
-        if (!filename.exists()) {
-            std::cerr << "file " << argv[i] << " not found!" << std::endl;
+    for (const auto& fname : config.positionalArgs) {
+        utils::Path filename(fname.c_str_safe());
+        if (!loader->exists(filename)) {
+            std::cerr << "file " << filename << " not found!" << std::endl;
             return 1;
         }
-        if (!filenames.empty()) filenames += ";";
-        filenames += argv[i];
     }
-    config.customArgs["filenames"] = utils::CString(filenames.c_str());
 
     config.title = "Lightbulb";
-
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
 
     return 0;

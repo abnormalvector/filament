@@ -15,7 +15,6 @@
  */
 
 #include "common/arguments.h"
-#include "common/SampleConfig.h"
 
 #include "generated/resources/monkey.h"
 #include "generated/resources/resources.h"
@@ -44,6 +43,8 @@
 #include <utils/EntityManager.h>
 #include <utils/getopt.h>
 
+#include <samples/SampleConfig.h>
+
 #include <iostream>
 #include <vector>
 
@@ -51,6 +52,7 @@ using namespace filament;
 using namespace filamesh;
 using namespace filament::math;
 
+namespace {
 struct Vertex {
     float3 position;
     float2 uv;
@@ -79,6 +81,7 @@ struct App {
     std::vector<utils::Entity> quadEntities;
     std::vector<MaterialInstance*> quadMatInstances;
 };
+} // namespace
 
 std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         filament::app::DisplayManager* dm, filament::app::AssetLoader* loader) {
@@ -86,6 +89,8 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     app->config = config;
 
     auto setup = [app](Engine* engine, View* view, Scene* scene) {
+        uint8_t sampleCount = uint8_t(app->config.getInt("samples", 1));
+
         auto& tcm = engine->getTransformManager();
         auto& rcm = engine->getRenderableManager();
         auto& em = utils::EntityManager::get();
@@ -94,7 +99,6 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
         constexpr float3 monkeyPosition{ 0, 0, -4};
         constexpr float3 upVector{ 0, 1, 0};
         const int eyeCount = app->config.stereoscopicEyeCount;
-        const uint8_t sampleCount = app->config.samples;
 
         // Create a mesh material and an instance.
         app->monkeyMaterial =
@@ -293,12 +297,7 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     };
 
 
-    auto fApp = FilamentApp2::Builder()
-                        .title(app->config.title)
-                        .backend(app->config.backend)
-                        .stereoscopicEyeCount(app->config.stereoscopicEyeCount)
-                        .samples(app->config.samples)
-                        .displayManager(dm)
+    auto fApp = samples::getBuilder(config, dm, loader)
                         .setup(setup)
                         .cleanup(cleanup)
                         .preRender(preRender)
@@ -316,6 +315,12 @@ std::unique_ptr<FilamentApp2> createSampleApp(SampleConfig config,
     return fApp;
 }
 
+samples::SampleParameters createAppParameters() {
+    return {
+        samples::Parameter::makeInt("samples", 'm', "MSAA sample count (1, 2, 4, 8)", 1, 1, 8),
+    };
+}
+
 #ifndef __ANDROID__
 int main(int argc, char** argv) {
 
@@ -326,27 +331,13 @@ int main(int argc, char** argv) {
 
     SampleConfig config;
     config.title = "stereoscopic rendering";
-    static constexpr const char* CUSTOM_OPTSTR = "m:";
-    static const utils::getopt::option CUSTOM_OPTIONS[] = {
-        { "samples", utils::getopt::required_argument, nullptr, 'm' }, { nullptr, 0, nullptr, 0 }
+    samples::CommandLineSpecification spec = {
+        .parameters = createAppParameters(),
     };
-    auto customHandler = [&config](int opt, const utils::CString& arg) -> bool {
-        switch (opt) {
-            case 'm':
-                config.customArgs["msaa"] = utils::CString(arg.c_str());
-                return true;
-        }
-        return false;
-    };
-    int optind = samples::handleCommandLineArguments(argc, argv, &config,
-            {
-                .customHandler = customHandler,
-                .customOptStr = CUSTOM_OPTSTR,
-                .customOptions = CUSTOM_OPTIONS,
-            });
+    samples::handleCommandLineArguments(argc, argv, &config, spec);
     auto dm = samples::getDisplayManager(config);
-
-    auto app = createSampleApp(config, dm.get(), nullptr);
+    auto loader = samples::getAssetLoader(config);
+    auto app = createSampleApp(config, dm.get(), loader.get());
     app->run();
     return 0;
 }

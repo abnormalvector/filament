@@ -206,7 +206,7 @@ if (NOT FILAMENT_OSMESA_PATH STREQUAL "")
     if (NOT EXISTS ${FILAMENT_OSMESA_PATH}/)
         message(FATAL_ERROR "Cannot find specified OSMesa build directory: ${FILAMENT_OSMESA_PATH}")
     endif()
-    set(FILAMENT_SUPPORTS_OSMESA TRUE)
+    set(FILAMENT_SUPPORTS_OSMESA TRUE CACHE BOOL "Enable OSMesa (headless GL context) for Filament" FORCE)
 endif()
 
 if (LINUX)
@@ -241,6 +241,9 @@ endif()
 
 if (ANDROID)
     add_definitions(-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__)
+    if (FILAMENT_ANDROID_PLATFORM_API_LEVEL)
+        add_definitions(-DFILAMENT_ANDROID_PLATFORM_API_LEVEL=${FILAMENT_ANDROID_PLATFORM_API_LEVEL})
+    endif()
 endif()
 
 if (NOT ANDROID AND NOT WASM AND NOT IOS AND NOT FILAMENT_LINUX_IS_MOBILE)
@@ -996,6 +999,7 @@ endif()
 
 if (IS_HOST_PLATFORM OR ANDROID)
    add_subdirectory(${LIBRARIES}/filamentapp)
+   add_subdirectory(${EXTERNAL}/libassimp/tnt)
 endif()
 
 if (IS_HOST_PLATFORM)
@@ -1007,7 +1011,6 @@ if (IS_HOST_PLATFORM)
 
     add_subdirectory(${FILAMENT}/samples)
 
-    add_subdirectory(${EXTERNAL}/libassimp/tnt)
     add_subdirectory(${EXTERNAL}/libpng/tnt)
     add_subdirectory(${EXTERNAL}/libsdl2/tnt)
     add_subdirectory(${EXTERNAL}/libz/tnt)

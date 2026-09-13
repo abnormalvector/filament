@@ -4,6 +4,9 @@
 
 #if CLIENT_MATERIAL_API_LEVEL < UNSTABLE_MATERIAL_API_LEVEL
 /** @public-api */
+// NOTE: getWorldFromModelMatrix is supported under API level 1 in the vertex shader,
+// but requires API level 2 in the fragment shader. Therefore, it is defined here
+// for vertex shaders, but redirected to an error macro in surface_instancing.glsl for fragment shaders.
 mat4 getWorldFromModelMatrix() {
     return object_uniforms_worldFromModelMatrix;
 }
@@ -207,6 +210,10 @@ void morphPosition(inout vec4 p) {
     morphData4(p, sampler1_positions);
 }
 #else
+#define morphData2 ERROR_morphData2_api_level_2_END
+#define morphData3 ERROR_morphData3_api_level_2_END
+#define morphData4 ERROR_morphData4_api_level_2_END
+
 void morphPosition(inout vec4 p) {
     int index = getVertexIndex() + pushConstants.morphingBufferOffset;
     ivec3 texcoord = ivec3(index % MAX_MORPH_TARGET_BUFFER_WIDTH, index / MAX_MORPH_TARGET_BUFFER_WIDTH, 0);

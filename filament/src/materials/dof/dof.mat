@@ -32,6 +32,10 @@ material {
            precision: medium
         },
         {
+            type : bool,
+            name : smoothForeground
+        },
+        {
             type : float,
             name : bokehAngle,
         },
@@ -379,6 +383,11 @@ float computeLayer(float coc, vec2 tiles) {
 }
 
 float foregroundFadding(const float coc) {
+    if (materialParams.smoothForeground) {
+        // Preparation discards radii below MAX_IN_FOCUS_COC. Start coverage at zero
+        // at that boundary instead of admitting the first surviving sample at full weight.
+        return smoothstep(MAX_IN_FOCUS_COC, MAX_IN_FOCUS_COC + 1.0, abs(coc));
+    }
     return saturate(abs(coc) - (MAX_IN_FOCUS_COC - 1.0));
 }
 
@@ -476,6 +485,9 @@ void fastTile(inout vec4 color, inout float alpha,
         color += t;
     }
     alpha = cocToAlpha(kernelSize);
+    if (materialParams.smoothForeground && tiles.g < 0.0) {
+        alpha = foregroundFadding(-kernelSize);
+    }
     color *= rcp(sampleCount(ringCountFast));
     color = min(vec4(MEDIUMP_FLT_MAX), color);
 }
@@ -642,7 +654,9 @@ void postProcess(inout PostProcessInputs postProcess) {
     if (fgOpacity > 0.0 && fgOpacity < 1.0 && bgOpacity == 0.0) {
         // this happens on very few pixels
         float centerCoc = textureLod(materialParams_coc, uv, 0.0).r;
-        float correctedOpacity = max(fgOpacity, cocToAlpha(centerCoc));
+        float centerOpacity = (materialParams.smoothForeground && centerCoc < 0.0) ?
+                foregroundFadding(centerCoc) : cocToAlpha(centerCoc);
+        float correctedOpacity = max(fgOpacity, centerOpacity);
         float updateOpacity = correctedOpacity / fgOpacity;
         foreground *= updateOpacity;
         fgOpacity = correctedOpacity;

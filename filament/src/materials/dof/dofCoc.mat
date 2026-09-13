@@ -17,6 +17,21 @@ material {
             name : cocParams
         },
         {
+            type : float4,
+            name : focusBandPlane,
+            precision: high
+        },
+        {
+            type : float4,
+            name : focusBandW,
+            precision: high
+        },
+        {
+            type : float4,
+            name : focusBandParams,
+            precision: high
+        },
+        {
             type : float2,
             name : cocClamp
         },
@@ -58,6 +73,7 @@ vertex {
 fragment {
 
 #include "dofUtils.fs"
+#include "dofFocusBand.fs"
 
 void dummy(){}
 
@@ -69,7 +85,7 @@ void postProcess(inout PostProcessInputs postProcess) {
 
     // Get the CoC radius.
     // We multiply by 0.5 to convert from diameter to radius.
-    float outCoc = getCOC(d, materialParams.cocParams) * 0.5;
+    float outCoc = focusCoc(d, uv) * 0.5;
 
     // Clamp to maximum allowable CoC radius.
     outCoc = clamp(outCoc, materialParams.cocClamp[0], materialParams.cocClamp[1]);

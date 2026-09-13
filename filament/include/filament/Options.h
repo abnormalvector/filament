@@ -338,6 +338,16 @@ struct FogOptions {
  * @see Camera
  */
 struct DepthOfFieldOptions {
+    /** Artistic focus band in user world space. Distances are in meters. */
+    struct FocusBand {
+        /** Unit normal and offset of the center plane. Positive is background. */
+        math::float4 plane = { 0, 0, -1, 0 };
+        float width = 6.0f;
+        float foregroundTransition = 5.0f;
+        float backgroundTransition = 8.0f;
+        bool enabled = false;
+    };
+
     enum class Filter : uint8_t {
         NONE,
         UNUSED,
@@ -396,6 +406,9 @@ struct DepthOfFieldOptions {
      * A value of 0 means default, which is 32 on desktop and 24 on mobile.
      */
     uint16_t maxBackgroundCOC = 0;
+
+    /** Replaces the lens CoC with a smooth band reaching the configured maximum radii. */
+    FocusBand focusBand;
 };
 
 /**

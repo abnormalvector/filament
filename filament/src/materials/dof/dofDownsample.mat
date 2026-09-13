@@ -17,6 +17,21 @@ material {
             name : cocParams
         },
         {
+            type : float4,
+            name : focusBandPlane,
+            precision: high
+        },
+        {
+            type : float4,
+            name : focusBandW,
+            precision: high
+        },
+        {
+            type : float4,
+            name : focusBandParams,
+            precision: high
+        },
+        {
             type : float2,
             name : cocClamp
         },
@@ -72,6 +87,7 @@ vertex {
 fragment {
 
 #include "dofUtils.fs"
+#include "dofFocusBand.fs"
 
 void dummy(){}
 
@@ -104,7 +120,17 @@ void postProcess(inout PostProcessInputs postProcess) {
 
     // Get the CoC radius of each four samples to downsample.
     // We multiply by 0.5 to convert from diameter to radius.
-    vec4 c = getCOC(d, materialParams.cocParams) * 0.5;
+    vec4 c;
+    if (materialParams.focusBandParams.w > 0.5) {
+        // uv is the center of the first source texel. Match textureGather's ordering.
+        highp vec2 texel = materialParams.texelSize;
+        c = vec4(focusCoc(d.x, uv + vec2(0.0, texel.y)),
+                 focusCoc(d.y, uv + texel),
+                 focusCoc(d.z, uv + vec2(texel.x, 0.0)),
+                 focusCoc(d.w, uv)) * 0.5;
+    } else {
+        c = getCOC(d, materialParams.cocParams) * 0.5;
+    }
     float outCoc = downsampleCoC(c);
     vec4 w = downsampleCocWeights(c, outCoc, 1.0) * hdr;
     vec4 outColor = (s01 * w[0] + s11 * w[1] + s10 * w[2] + s00 * w[3]) * rcp(dot(vec4(1.0), w));

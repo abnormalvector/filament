@@ -511,8 +511,14 @@ add_custom_command(
 )
 
 add_custom_command(
+        OUTPUT "${MATERIAL_DIR}/dofCoc.filamat"
+        DEPENDS src/materials/dof/dofUtils.fs src/materials/dof/dofFocusBand.fs
+        APPEND
+)
+
+add_custom_command(
         OUTPUT "${MATERIAL_DIR}/dofDownsample.filamat"
-        DEPENDS src/materials/dof/dofUtils.fs
+        DEPENDS src/materials/dof/dofUtils.fs src/materials/dof/dofFocusBand.fs
         APPEND
 )
 

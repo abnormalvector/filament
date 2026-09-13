@@ -1847,6 +1847,19 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::dof(FrameGraph& fg,
                 mi->setParameter("depth", depth, SamplerParams{
                         .filterMin = SamplerMinFilter::NEAREST });
                 mi->setParameter("cocParams", cocParams);
+                // Express the user world plane directly in homogeneous clip coordinates.
+                // getUserViewMatrix includes the camera-origin and IBL world transforms.
+                // Keep the plane transformation in double precision before uploading floats.
+                const mat4 viewFromClip = inverse(mat4(cameraInfo.projection));
+                const mat4 userWorldFromClip = inverse(cameraInfo.getUserViewMatrix()) * viewFromClip;
+                mi->setParameter("focusBandPlane", float4(transpose(userWorldFromClip) *
+                        double4(dofOptions.focusBand.plane)));
+                mi->setParameter("focusBandW", float4(transpose(viewFromClip)[3]));
+                mi->setParameter("focusBandParams", float4{
+                        dofOptions.focusBand.width * 0.5f,
+                        1.0f / dofOptions.focusBand.foregroundTransition,
+                        1.0f / dofOptions.focusBand.backgroundTransition,
+                        dofOptions.focusBand.enabled ? 1.0f : 0.0f });
                 mi->setParameter("cocClamp", float2{
                     -(dofOptions.maxForegroundCOC ? dofOptions.maxForegroundCOC : DOF_DEFAULT_MAX_COC),
                       dofOptions.maxBackgroundCOC ? dofOptions.maxBackgroundCOC : DOF_DEFAULT_MAX_COC});
@@ -2099,6 +2112,7 @@ FrameGraphId<FrameGraphTexture> PostProcessManager::dof(FrameGraph& fg,
                         bokehScale.y / (inputDesc.height * dofResolution)
                 });
                 mi->setParameter("cocToPixelScale", (1.0f / float(dofResolution)));
+                mi->setParameter("smoothForeground", dofOptions.focusBand.enabled);
                 mi->setParameter("ringCounts", float4{
                     dofOptions.foregroundRingCount ? dofOptions.foregroundRingCount : DOF_DEFAULT_RING_COUNT,
                     dofOptions.backgroundRingCount ? dofOptions.backgroundRingCount : DOF_DEFAULT_RING_COUNT,

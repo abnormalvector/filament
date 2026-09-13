@@ -1656,6 +1656,9 @@ void FView::setFogOptions(FogOptions options) noexcept {
 void FView::setDepthOfFieldOptions(DepthOfFieldOptions options) noexcept {
     options.cocScale = std::max(0.0f, options.cocScale);
     options.maxApertureDiameter = std::max(0.0f, options.maxApertureDiameter);
+    options.focusBand.width = std::max(0.0f, options.focusBand.width);
+    options.focusBand.foregroundTransition = std::max(0.001f, options.focusBand.foregroundTransition);
+    options.focusBand.backgroundTransition = std::max(0.001f, options.focusBand.backgroundTransition);
     mDepthOfFieldOptions = options;
 }
 

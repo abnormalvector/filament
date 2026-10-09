@@ -657,8 +657,15 @@ void postProcess(inout PostProcessInputs postProcess) {
         float centerOpacity = (materialParams.smoothForeground && centerCoc < 0.0) ?
                 foregroundFadding(centerCoc) : cocToAlpha(centerCoc);
         float correctedOpacity = max(fgOpacity, centerOpacity);
-        float updateOpacity = correctedOpacity / fgOpacity;
-        foreground *= updateOpacity;
+        if (materialParams.smoothForeground) {
+            // Fill the coverage the gather missed with this pixel's own color. Stretching the gathered foreground
+            // over it instead lets a lone bright sample, such as an emissive highlight a sliver of the kernel saw,
+            // flood pixels that barely saw it, which bloom then spreads into flares.
+            foreground += textureLod(materialParams_color, uv, 0.0) * (correctedOpacity - fgOpacity);
+        } else {
+            float updateOpacity = correctedOpacity / fgOpacity;
+            foreground *= updateOpacity;
+        }
         fgOpacity = correctedOpacity;
         //foreground.rg += 0.1;
     }

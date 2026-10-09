@@ -89,6 +89,9 @@ fragment {
 #include "dofUtils.fs"
 #include "dofFocusBand.fs"
 
+// The brightest a highlight may enter the blur at with a focus band, as a multiple of white.
+#define BAND_BLUR_HIGHLIGHT 4.0
+
 void dummy(){}
 
 void postProcess(inout PostProcessInputs postProcess) {
@@ -134,6 +137,14 @@ void postProcess(inout PostProcessInputs postProcess) {
     float outCoc = downsampleCoC(c);
     vec4 w = downsampleCocWeights(c, outCoc, 1.0) * hdr;
     vec4 outColor = (s01 * w[0] + s11 * w[1] + s10 * w[2] + s00 * w[3]) * rcp(dot(vec4(1.0), w));
+
+    // With a focus band, highlights enter the blur at no more than a few times white, keeping their hue. A blurred
+    // glow otherwise stays far above white over a wider area, which bloom spreads into flares while it crosses the
+    // band's transition. In-focus pixels keep their full brightness, since the combine takes them from the sharp image.
+    if (materialParams.focusBandParams.w > 0.5) {
+        float peak = max(max(outColor.r, outColor.g), outColor.b);
+        outColor.rgb *= min(1.0, BAND_BLUR_HIGHLIGHT / max(peak, 0.0001));
+    }
 
     // Clamp to maximum allowable CoC radius.
     outCoc = clamp(outCoc, materialParams.cocClamp[0], materialParams.cocClamp[1]);
